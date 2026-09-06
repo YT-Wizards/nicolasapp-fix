@@ -1,0 +1,43 @@
+{
+  "name": "vyt",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Automatic FaceTuber-style long-form video production for macOS",
+  "main": "electron/main.js",
+  "scripts": {
+    "app": "electron .",
+    "build:mac": "electron-builder --mac dir",
+    "test": "npm run test:node && npm run test:python",
+    "test:node": "node --test tests/test_*.js",
+    "test:python": "python3 -m unittest discover -s tests -p 'test_*.py'"
+  },
+  "devDependencies": {
+    "electron": "43.4.0",
+    "electron-builder": "26.15.3"
+  },
+  "build": {
+    "appId": "com.nicolas.vyt",
+    "productName": "VYT",
+    "asar": true,
+    "asarUnpack": [
+      "engine/**",
+      "engine/vendor/**",
+      "assets/models/**"
+    ],
+    "directories": {
+      "output": "dist-app"
+    },
+    "files": [
+      "electron/**",
+      "ui/**",
+      "engine/**",
+      "assets/**",
+      "package.json"
+    ],
+    "mac": {
+      "target": "dir",
+      "category": "public.app-category.video",
+      "icon": "assets/vyt.icns"
+    }
+  }
+}

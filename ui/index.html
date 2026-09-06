@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>VYT</title>
+    <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="channels.css" />
+    <style>
+      .product-toggle{margin-bottom:12px}.product-qr-panel{border:1px solid #34302a;background:linear-gradient(145deg,rgba(31,27,22,.75),rgba(13,16,20,.96));border-radius:14px;padding:16px;margin:0 0 20px}.product-qr-panel[hidden]{display:none}.product-fields{display:grid;grid-template-columns:1fr .55fr;gap:11px}.product-qr-panel>label,.product-fields label{display:block;color:#9ca2aa;font-size:10px;letter-spacing:.04em}.product-qr-panel label small{color:#686f78}.product-qr-panel .text-input{margin-top:7px;padding:11px 12px;font-size:13px}.product-qr-panel>label{margin-top:11px}.qr-picker{width:100%;display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:12px;margin-top:13px;padding:11px;border-radius:12px;border:1px dashed #4b4234;background:#101216;color:#d8d9dc;text-align:left;cursor:pointer}.qr-preview{width:45px;height:45px;border-radius:8px;background:#f5f1e9;color:#171717;display:grid;place-items:center;font-size:9px;font-weight:900;background-size:cover;background-position:center}.qr-picker strong,.qr-picker small{display:block}.qr-picker strong{font-size:12px}.qr-picker small{font-size:10px;color:#777f89;margin-top:3px}.qr-picker b{font-size:10px;color:var(--gold2)}.product-qr-panel>p{font-size:10px;line-height:1.5;color:#747b85;margin:11px 1px 0}
+    </style>
+  </head>
+  <body>
+    <div class="ambient ambient-a"></div><div class="ambient ambient-b"></div>
+    <header class="topbar">
+      <div class="brand"><div class="brand-mark">V</div><div><b>VYT</b><span>Automatic video studio</span></div></div>
+      <nav><button class="nav-button active" data-view="create">Crear</button><button class="nav-button" data-view="history">Historial</button><button class="nav-button" data-view="channels">Canales</button></nav>
+      <button id="settingsButton" class="icon-button" aria-label="Ajustes">⚙</button>
+    </header>
+
+    <main>
+      <section id="createView" class="view active">
+        <div class="hero-row">
+          <div><div class="eyebrow">HEYGEN → VÍDEO COMPLETO</div><h1>Un vídeo terminado.<br><em>Sin editar nada.</em></h1><p class="lede">Añade el vídeo de HeyGen. VYT analiza la narración, crea el B-roll y entrega el montaje final en Descargas.</p></div>
+          <button id="styleButton" class="ghost-button">Ver estilo aprobado</button>
+        </div>
+
+        <div class="workspace-grid">
+          <section class="panel creation-panel">
+            <label class="field-label" for="titleInput">Título del vídeo</label>
+            <input id="titleInput" class="text-input" placeholder="Ej. Why Walt Hayes Changed Everything" maxlength="110" />
+
+            <div id="dropZone" class="drop-zone">
+              <div class="drop-icon">＋</div>
+              <div><strong id="fileTitle">Añadir vídeo de HeyGen</strong><span id="fileMeta">MP4 o MOV · 8–35 min · horizontal · audio final incluido</span></div>
+              <button id="browseButton" class="small-button">Seleccionar</button>
+            </div>
+
+            <label class="toggle-row">
+              <input id="brandingToggle" type="checkbox" />
+              <span class="toggle"></span>
+              <span><strong>Permitir marcas reales</strong><small>Solo si la narración menciona expresamente una marca o producto.</small></span>
+            </label>
+
+            <label class="toggle-row product-toggle">
+              <input id="productQrToggle" type="checkbox" />
+              <span class="toggle"></span>
+              <span><strong>Añadir QR de venta</strong><small>Tarjeta breve como Bertha, solo durante la llamada a la acción del producto.</small></span>
+            </label>
+
+            <div id="productQrPanel" class="product-qr-panel" hidden>
+              <button id="selectProductQr" type="button" class="qr-picker">
+                <span id="productQrPreview" class="qr-preview">QR</span>
+                <span><strong id="productQrName">Seleccionar tarjeta completa</strong><small>PNG, JPG o WebP · debe incluir QR, nombre, precio y web</small></span>
+                <b>Elegir</b>
+              </button>
+              <p>VYT muestra esta imagen durante el CTA real y una vez más en una aparición posterior del avatar.</p>
+            </div>
+
+            <div class="mix-card">
+              <div class="mix-head"><span>Mezcla FaceTuber adaptativa</span><span>cortes por frase · ritmo adaptativo en vídeos largos</span></div>
+              <div class="mix-bar"><i style="width:40%"></i><i style="width:38%"></i><i style="width:14%"></i><i style="width:8%"></i></div>
+              <div class="mix-legend"><span><b>40%</b> Clips</span><span><b>38%</b> Imágenes</span><span><b>14%</b> Avatar</span><span><b>8%</b> Dividida</span></div>
+            </div>
+
+            <div id="formError" class="form-error"></div>
+            <div class="action-row">
+              <button id="testButton" class="secondary-button">Prueba de 90 s</button>
+              <button id="createButton" class="primary-button">Crear vídeo completo <span>→</span></button>
+            </div>
+            <p class="limit-note">Vídeos completos de 8–35 min · límite: 7,00 $ por vídeo · prueba de 90 s: 1,50 $ · máximo dos a la vez · salida 1080p</p>
+          </section>
+
+          <aside class="panel jobs-panel">
+            <div class="panel-title"><div><span>Producción</span><small id="capacityLabel">0 de 2 activas</small></div><span id="connectionPill" class="status-pill">Configurar APIs</span></div>
+            <div id="jobsEmpty" class="empty-state"><div class="pulse-ring"></div><strong>Aquí verás el progreso real</strong><p>Fase actual, porcentaje, tiempo restante y coste consumido.</p></div>
+            <div id="jobsList" class="jobs-list"></div>
+          </aside>
+        </div>
+      </section>
+
+      <section id="historyView" class="view">
+        <div class="history-head"><div><div class="eyebrow">RESULTADOS</div><h2>Historial sencillo</h2></div><p>Solo se conserva el vídeo final y su coste.</p></div>
+        <div id="historyList" class="history-list"></div>
+      </section>
+
+      <section id="channelsView" class="view">
+        <div class="channels-head">
+          <div><div class="eyebrow">GESTOR PERSONAL</div><h2>Canales</h2><p>Accesos, estado y proxy de tus canales, separados de la producción de vídeo.</p></div>
+          <div id="channelsSummary" class="channels-summary"><strong>—</strong><span>canales</span></div>
+        </div>
+        <section class="panel channels-panel">
+          <div class="channels-toolbar">
+            <input id="channelSearch" class="text-input" placeholder="Buscar canal o correo…" />
+            <select id="channelProxyFilter" class="channel-select"><option value="">Todos los proxies</option><option value="none">Sin proxy</option></select>
+            <button id="toggleChannelEmails" class="secondary-button">Mostrar correos</button>
+            <button id="importChannelsButton" class="secondary-button">Importar</button>
+            <button id="newChannelButton" class="primary-button">+ Nuevo canal</button>
+          </div>
+          <div class="channels-meta"><span id="channelsAssigned">0 con proxy asignado</span><span id="channelsConnection">Base de Canales</span></div>
+          <div class="channels-table-wrap">
+            <table class="channels-table">
+              <thead><tr><th>Canal</th><th>Proxy</th><th>Estado</th><th></th></tr></thead>
+              <tbody id="channelsBody"></tbody>
+            </table>
+            <div id="channelsEmpty" class="channels-empty">Cargando tus canales…</div>
+          </div>
+          <div id="channelsError" class="form-error"></div>
+        </section>
+      </section>
+    </main>
+
+    <dialog id="settingsDialog" class="modal">
+      <form method="dialog" class="modal-card">
+        <div class="modal-head"><div><span class="eyebrow">CONEXIONES SEGURAS</span><h3>Ajustes</h3></div><button value="cancel" class="close-button">×</button></div>
+        <p class="modal-copy">Las claves quedan cifradas con el llavero de este Mac. Nunca aparecen en el vídeo ni en el historial.</p>
+        <label>GeminiGen / SnapGen API key<input id="geminigenKey" type="password" autocomplete="off" placeholder="Dejar vacío para conservar la guardada" /></label>
+        <label>Algrow API key<input id="algrowKey" type="password" autocomplete="off" placeholder="Dejar vacío para conservar la guardada" /></label>
+        <label>Vercel AI Gateway API key <small>Claude dirige las escenas · Gemini revisa la calidad</small><input id="gatewayKey" type="password" autocomplete="off" placeholder="Dejar vacío para conservar la guardada" /></label>
+        <div id="settingsStatus" class="connection-grid"></div>
+        <div id="settingsError" class="form-error"></div>
+        <div class="modal-actions"><button id="testConnections" type="button" class="secondary-button">Comprobar</button><button id="saveSettings" type="button" class="primary-button">Guardar conexiones</button></div>
+      </form>
+    </dialog>
+
+    <dialog id="styleDialog" class="modal wide-modal">
+      <form method="dialog" class="modal-card">
+        <div class="modal-head"><div><span class="eyebrow">BLOQUEADO PARA PRODUCCIÓN</span><h3>Estilo aprobado</h3></div><button value="cancel" class="close-button">×</button></div>
+        <div class="style-summary"><b>Documental real de YouTube</b><span>Mate, cotidiano, ligeramente imperfecto. Nunca cinematográfico, brillante, sucio ni artificial.</span></div>
+        <pre id="stylePrompt"></pre>
+      </form>
+    </dialog>
+
+    <dialog id="channelDialog" class="modal wide-modal">
+      <form method="dialog" class="modal-card">
+        <div class="modal-head"><div><span class="eyebrow">CANAL</span><h3 id="channelDialogTitle">Nuevo canal</h3></div><button value="cancel" class="close-button">×</button></div>
+        <div class="channel-form-grid">
+          <label>Gmail<input id="channelGmail" autocomplete="off" /></label>
+          <label>Contraseña<input id="channelPassword" autocomplete="off" /></label>
+          <label>Email de recuperación<input id="channelRecovery" autocomplete="off" /></label>
+          <label>Teléfono<input id="channelPhone" autocomplete="off" /></label>
+          <label>Clave 2FA<input id="channelTwofa" autocomplete="off" /></label>
+          <label>Nombre del canal<input id="channelName" autocomplete="off" /></label>
+          <label class="full">URL<input id="channelUrl" autocomplete="off" /></label>
+          <label>Año<input id="channelYear" type="number" min="1900" max="2100" /></label>
+          <label>Estado<select id="channelStatus" class="channel-select"><option value="aged">Aged</option><option value="active">Activo</option><option value="under_review">En revisión</option><option value="monetized">Monetizado</option></select></label>
+          <label>Origen<input id="channelSource" autocomplete="off" /></label>
+          <label>Proxy<select id="channelProxy" class="channel-select"><option value="">Ninguno</option></select></label>
+          <label class="full">Etiquetas<div id="channelLabels" class="channel-labels"></div></label>
+          <label class="full">Notas<textarea id="channelNotes"></textarea></label>
+        </div>
+        <div id="channelFormError" class="form-error"></div>
+        <div class="modal-actions"><button value="cancel" class="secondary-button">Cancelar</button><button id="saveChannelButton" type="button" class="primary-button">Guardar canal</button></div>
+      </form>
+    </dialog>
+
+    <dialog id="importChannelsDialog" class="modal wide-modal">
+      <form method="dialog" class="modal-card">
+        <div class="modal-head"><div><span class="eyebrow">IMPORTAR</span><h3>Añadir varios canales</h3></div><button value="cancel" class="close-button">×</button></div>
+        <p class="modal-copy">Una cuenta por línea: correo | contraseña | recuperación | 2FA</p>
+        <textarea id="channelsImportText" class="import-text" rows="9" placeholder="correo@gmail.com | contraseña | recuperacion@gmail.com | CLAVE2FA"></textarea>
+        <div id="channelsImportError" class="form-error"></div>
+        <div class="modal-actions"><button value="cancel" class="secondary-button">Cancelar</button><button id="runChannelsImport" type="button" class="primary-button">Importar</button></div>
+      </form>
+    </dialog>
+    <div id="toast" class="toast"></div>
+    <script src="renderer.js"></script>
+  </body>
+</html>

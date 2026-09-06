@@ -1,0 +1,67 @@
+# Dependencies and builds
+node_modules/
+dist-app/
+coverage/
+.venv/
+venv/
+
+# Local caches and logs
+.DS_Store
+._*
+.vscode/
+.idea/
+*.swp
+*.log
+npm-debug.log*
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Secrets and local runtime data
+.env
+.env.*
+!.env.example
+.npmrc
+electron-builder.env
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+*.key
+*.p12
+*.pfx
+*.pem
+!engine/vendor/certifi/cacert.pem
+*.mobileprovision
+*.keychain*
+/data/
+/checkpoints/
+/product-cards/
+/outputs/
+/exports/
+/tmp/
+*.tmp
+*.part
+*.download
+
+# User media and packaged artifacts
+*.mp4
+*.mov
+*.m4v
+*.mkv
+*.webm
+*.wav
+*.mp3
+*.m4a
+*.aac
+*.dmg
+*.zip
+
+# Whisper models are downloaded locally (GitHub rejects the 148 MB binary).
+assets/models/*
+!assets/models/README.md
+
+# Obsolete local prototype; Electron starts from electron/main.js.
+/main.js

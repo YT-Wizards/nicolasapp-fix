@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#171a20"/>
+      <stop offset="1" stop-color="#07090c"/>
+    </linearGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffd782"/>
+      <stop offset="0.55" stop-color="#e9aa45"/>
+      <stop offset="1" stop-color="#b96917"/>
+    </linearGradient>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="34"/>
+    </filter>
+  </defs>
+  <rect x="32" y="32" width="960" height="960" rx="224" fill="url(#bg)"/>
+  <rect x="45" y="45" width="934" height="934" rx="211" fill="none" stroke="#30343b" stroke-width="10"/>
+  <path d="M250 270 L452 756 Q470 798 512 798 Q554 798 572 756 L774 270 L630 270 L512 600 L394 270 Z" fill="#d58d2f" opacity=".3" filter="url(#shadow)"/>
+  <path d="M250 250 L451 741 Q470 788 512 788 Q554 788 573 741 L774 250 L628 250 L512 590 L396 250 Z" fill="url(#gold)"/>
+  <path d="M293 302 L463 713 Q481 755 512 755" fill="none" stroke="#fff2cf" stroke-width="18" stroke-linecap="round" opacity=".38"/>
+</svg>
