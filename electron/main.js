@@ -70,6 +70,7 @@ function publicState() {
       ...job,
       productSale: { enabled: Boolean(productSale?.enabled) },
       costLedger: jobStore?.costTotals(job.id) || {},
+      providerOperations: jobStore?.operationSummary(job.id) || {},
     })),
     history: state.history
   };

@@ -52,3 +52,24 @@ test('aggregates durable cost ledger by kind', () => {
   store.close();
   fs.rmSync(directory, { recursive: true, force: true });
 });
+
+test('summarizes provider operations for job monitoring', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vyt-operation-store-'));
+  const store = new JobStore(path.join(directory, 'vyt.sqlite'));
+  store.db.prepare(`
+    INSERT INTO provider_operations(
+      operation_key, job_id, scene_id, provider, asset_type, prompt_hash, status
+    ) VALUES (?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    'op-1', 'job-3', 'scene-1', 'snapgen', 'video', 'hash-1', 'submitted',
+    'op-2', 'job-3', 'scene-2', 'algrow', 'image', 'hash-2', 'completed',
+    'op-3', 'job-3', 'scene-3', 'snapgen', 'video', 'hash-3', 'download_pending',
+  );
+  assert.deepEqual(store.operationSummary('job-3'), {
+    submitted: 1,
+    completed: 1,
+    download_pending: 1,
+  });
+  store.close();
+  fs.rmSync(directory, { recursive: true, force: true });
+});

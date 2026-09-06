@@ -108,16 +108,36 @@ class OperationLedger:
                     (operation_key,),
                 )
                 return ""
-            self.connection.execute(
-                """
-                INSERT INTO provider_operations(
-                    operation_key, job_id, scene_id, provider, asset_type,
-                    prompt_hash, status, attempts
-                ) VALUES (?, ?, ?, ?, ?, ?, 'prepared', 1)
-                """,
-                (operation_key, str(job_id), str(scene_id), str(provider),
-                 str(asset_type), str(prompt_hash)),
-            )
+            try:
+                self.connection.execute(
+                    """
+                    INSERT INTO provider_operations(
+                        operation_key, job_id, scene_id, provider, asset_type,
+                        prompt_hash, status, attempts
+                    ) VALUES (?, ?, ?, ?, ?, ?, 'prepared', 1)
+                    """,
+                    (operation_key, str(job_id), str(scene_id), str(provider),
+                     str(asset_type), str(prompt_hash)),
+                )
+            except sqlite3.IntegrityError:
+                # A second process can pass the initial SELECT while the first
+                # process is committing the same idempotency key. Re-read the
+                # durable row and apply the same no-duplicate policy instead of
+                # leaking a raw UNIQUE constraint failure.
+                existing = self.connection.execute(
+                    "SELECT status, remote_job_id FROM provider_operations WHERE operation_key=?",
+                    (operation_key,),
+                ).fetchone()
+                if existing:
+                    status, remote_job_id = existing
+                    if status in {"submitted", "polling", "download_pending"} and remote_job_id:
+                        return str(remote_job_id)
+                    if status == "prepared":
+                        raise OperationRecoveryRequired(
+                            f"Платная операция {operation_key[:12]} была подготовлена, "
+                            "но remote ID не сохранился. Требуется reconciliation; новая покупка запрещена."
+                        )
+                raise
             return ""
 
     def mark_submitted(self, operation_key, remote_job_id):

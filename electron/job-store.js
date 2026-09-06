@@ -45,6 +45,21 @@ class JobStore {
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
       );
       CREATE INDEX IF NOT EXISTS cost_events_job_idx ON cost_events(job_id, kind);
+      CREATE TABLE IF NOT EXISTS provider_operations (
+        operation_key TEXT PRIMARY KEY,
+        job_id TEXT NOT NULL,
+        scene_id TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        asset_type TEXT NOT NULL,
+        prompt_hash TEXT NOT NULL,
+        status TEXT NOT NULL,
+        remote_job_id TEXT,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        last_error TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE INDEX IF NOT EXISTS provider_operations_job_idx ON provider_operations(job_id, scene_id);
     `);
     this.db.prepare(`
       INSERT OR IGNORE INTO schema_migrations(version, applied_at)
@@ -107,6 +122,16 @@ class JobStore {
     `).all(String(jobId || '')).reduce((totals, row) => {
       totals[row.kind] = Number(row.amount || 0);
       return totals;
+    }, {});
+  }
+
+  operationSummary(jobId) {
+    return this.db.prepare(`
+      SELECT status, COUNT(*) AS count
+      FROM provider_operations WHERE job_id=? GROUP BY status
+    `).all(String(jobId || '')).reduce((summary, row) => {
+      summary[row.status] = Number(row.count || 0);
+      return summary;
     }, {});
   }
 

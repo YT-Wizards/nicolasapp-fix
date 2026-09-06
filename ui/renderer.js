@@ -134,7 +134,7 @@ function renderJobs() {
       <div class="progress-track"><i style="width:${Math.max(0, Math.min(100, job.progress || 0))}%"></i></div>
       <div class="job-detail"><span>${escapeHtml(job.phase || 'En cola')}</span><span>${job.status === 'queued' ? 'esperando turno' : formatEta(job.etaSeconds)}</span></div>
       <div class="job-cost"><span>${escapeHtml(job.detail || (job.testMode ? 'Prueba de 90 s' : 'Vídeo completo'))}</span><b>${Number(job.spentUsd || 0).toFixed(2)} $ / ${Number(job.maxCostUsd || (job.testMode ? 1.5 : 7)).toFixed(2)} $</b></div>
-      <div class="job-metrics"><span>${escapeHtml(statusLabel(job.status))}</span><span>${costMetric(job.costLedger, 'avoided_duplicate')} recuperados</span><span>${costMetric(job.costLedger, 'charged')} cobrados</span></div>
+      <div class="job-metrics"><span>${escapeHtml(statusLabel(job.status))}</span><span>${costMetric(job.costLedger, 'avoided_duplicate')} recuperados</span><span>${costMetric(job.costLedger, 'charged')} cobrados</span><span>${operationMetric(job.providerOperations)} operaciones</span></div>
       ${job.warning ? `<div class="job-warning">${escapeHtml(job.warning)}</div>` : ''}
       <div class="job-actions"><button data-cancel="${job.id}">Cancelar</button></div>
     </article>`).join('');
@@ -148,6 +148,12 @@ function statusLabel(status) {
 function costMetric(ledger, kind) {
   const value = Number(ledger?.[kind] || 0);
   return `${value.toFixed(2)} $`;
+}
+
+function operationMetric(summary) {
+  const waiting = ['submitted', 'polling', 'download_pending']
+    .reduce((total, status) => total + Number(summary?.[status] || 0), 0);
+  return `${waiting} en recovery`;
 }
 
 function renderHistory() {

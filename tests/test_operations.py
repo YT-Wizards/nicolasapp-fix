@@ -1,4 +1,5 @@
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 import sys
@@ -32,6 +33,50 @@ class OperationLedgerTests(unittest.TestCase):
                 "remote-123",
             )
             ledger.close()
+
+    def test_submitted_operation_and_costs_survive_restart(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "vyt.sqlite"
+            ledger = OperationLedger(database)
+            key = ledger.operation_key("job", "scene", "video", "snapgen", "prompt")
+            ledger.prepare(key, "job", "scene", "snapgen", "video", ledger.prompt_hash("prompt"))
+            ledger.mark_submitted(key, "remote-after-crash")
+            ledger.record_cost("job", "charged", 0.02, provider="snapgen", operation_key=key)
+            ledger.close()
+
+            reopened = OperationLedger(database)
+            self.assertEqual(
+                reopened.prepare(key, "job", "scene", "snapgen", "video", reopened.prompt_hash("prompt")),
+                "remote-after-crash",
+            )
+            self.assertEqual(reopened.cost_totals("job")["charged"], 0.02)
+            reopened.close()
+
+    def test_concurrent_prepare_allows_only_one_new_submission(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "vyt.sqlite"
+            ledgers = [OperationLedger(database), OperationLedger(database)]
+            key = ledgers[0].operation_key("job", "scene", "image", "algrow", "prompt")
+            results = []
+            lock = threading.Lock()
+
+            def prepare(ledger):
+                try:
+                    value = ledger.prepare(key, "job", "scene", "algrow", "image", ledger.prompt_hash("prompt"))
+                except OperationRecoveryRequired:
+                    value = "recovery-required"
+                with lock:
+                    results.append(value)
+
+            threads = [threading.Thread(target=prepare, args=(ledger,)) for ledger in ledgers]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+            self.assertEqual(results.count(""), 1)
+            self.assertEqual(results.count("recovery-required"), 1)
+            for ledger in ledgers:
+                ledger.close()
 
     def test_cost_events_are_grouped_by_kind(self):
         with tempfile.TemporaryDirectory() as directory:
