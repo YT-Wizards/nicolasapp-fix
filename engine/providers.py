@@ -28,6 +28,13 @@ class ProviderError(RuntimeError):
     pass
 
 
+class ProviderHTTPError(ProviderError):
+    def __init__(self, status, message, retry_after=None):
+        super().__init__(f"HTTP {status}: {message}")
+        self.status = int(status)
+        self.retry_after = retry_after
+
+
 class RegeneratableError(ProviderError):
     """The provider explicitly failed, or a completed asset failed visual QA."""
     pass
@@ -186,7 +193,12 @@ def _json_request(url, method="GET", headers=None, payload=None, timeout=60):
             return json.loads(raw) if raw else {}
     except urllib.error.HTTPError as error:
         message = error.read().decode("utf-8", errors="replace")
-        raise ProviderError(f"HTTP {error.code}: {message[:800]}") from error
+        raw_retry_after = error.headers.get("Retry-After") if error.headers else None
+        try:
+            retry_after = max(0.0, float(raw_retry_after)) if raw_retry_after is not None else None
+        except (TypeError, ValueError):
+            retry_after = None
+        raise ProviderHTTPError(error.code, message[:800], retry_after=retry_after) from error
     except (urllib.error.URLError, TimeoutError, ConnectionError, OSError) as error:
         raise ProviderError(str(error)) from error
 
@@ -219,22 +231,37 @@ def _sleep_before(deadline, seconds):
     return time.monotonic() < float(deadline)
 
 
+def _retry_delay(error, fallback):
+    retry_after = getattr(error, "retry_after", None)
+    if retry_after is None:
+        return float(fallback)
+    return min(120.0, max(0.0, float(retry_after)))
+
+
 def download(url, destination, timeout=120, deadline=None):
     destination = Path(destination)
     destination.parent.mkdir(parents=True, exist_ok=True)
     deadline = float(deadline) if deadline is not None else time.monotonic() + float(timeout)
-    request = urllib.request.Request(url, headers={"User-Agent": "VYT/1.0"})
+    partial = destination.with_suffix(destination.suffix + ".part")
+    downloaded = partial.stat().st_size if partial.exists() else 0
+    headers = {"User-Agent": "VYT/1.0"}
+    if downloaded:
+        headers["Range"] = f"bytes={downloaded}-"
+    request = urllib.request.Request(url, headers=headers)
     try:
-        with urllib.request.urlopen(request, timeout=_remaining_timeout(deadline, timeout)) as response, destination.open("wb") as output:
-            while True:
-                if time.monotonic() >= deadline:
-                    raise TimeoutError("descarga fuera del tiempo máximo")
-                chunk = response.read(1024 * 1024)
-                if not chunk:
-                    break
-                output.write(chunk)
+        with urllib.request.urlopen(request, timeout=_remaining_timeout(deadline, timeout)) as response:
+            append = bool(downloaded and getattr(response, "status", 200) == 206)
+            with partial.open("ab" if append else "wb") as output:
+                while True:
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError("descarga fuera del tiempo máximo")
+                    chunk = response.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    output.write(chunk)
+        partial.replace(destination)
     except Exception as error:
-        destination.unlink(missing_ok=True)
+        # Keep the partial file so a later signed-URL refresh can continue it.
         raise ProviderError(f"No se pudo descargar el recurso: {error}") from error
     return destination
 
@@ -465,7 +492,7 @@ class AlgrowClient:
                 # temporary timeouts and 5xx pages instead of purchasing another.
                 last_poll_error = error
                 poll_errors += 1
-                _sleep_before(deadline, min(20, 3 + poll_errors * 2))
+                _sleep_before(deadline, _retry_delay(error, min(20, 3 + poll_errors * 2)))
                 continue
             state = str(status.get("status", "")).lower()
             if state in {"completed", "success", "succeeded"}:
@@ -485,7 +512,7 @@ class AlgrowClient:
                         last_download_error = error
                         if time.monotonic() >= deadline:
                             break
-                        _sleep_before(deadline, min(20, 3 + attempt * 3))
+                    _sleep_before(deadline, min(20, 3 + attempt * 3))
                 raise PaidAssetRecoveryError(
                     "Algrow terminó la imagen pagada, pero su archivo todavía no pudo descargarse: "
                     f"{_safe_provider_reason(last_download_error)}"
@@ -631,7 +658,15 @@ class GeminiGenClient:
                         raise PaidAssetRecoveryError(
                             f"No se pudo consultar el clip ya generado (HTTP {response.status_code})."
                         )
-                    raise requests.RequestException(f"HTTP {response.status_code}: {response.text[:300]}")
+                    retry_after = None
+                    try:
+                        raw_retry_after = response.headers.get("Retry-After")
+                        retry_after = float(raw_retry_after) if raw_retry_after is not None else None
+                    except (AttributeError, TypeError, ValueError):
+                        pass
+                    raise ProviderHTTPError(
+                        response.status_code, response.text[:300], retry_after=retry_after,
+                    )
                 status_json = response.json()
                 status = status_json.get("data") if isinstance(status_json.get("data"), dict) else status_json
                 if not isinstance(status, dict) or not status:
@@ -639,6 +674,15 @@ class GeminiGenClient:
                 poll_errors = 0
             except PaidAssetRecoveryError:
                 raise
+            except ProviderHTTPError as error:
+                poll_errors += 1
+                active_deadline = download_deadline or deadline
+                if time.monotonic() >= active_deadline:
+                    raise PaidAssetRecoveryError(
+                        "El clip ya fue generado y pagado, pero su consulta sigue pendiente."
+                    ) from error
+                _sleep_before(active_deadline, _retry_delay(error, min(20, 4 + poll_errors * 2)))
+                continue
             except (requests.RequestException, ValueError) as error:
                 poll_errors += 1
                 # SnapGen occasionally returns an empty/non-JSON page or a read

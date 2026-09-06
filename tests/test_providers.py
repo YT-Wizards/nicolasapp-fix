@@ -7,10 +7,31 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "engine"))
 
-from providers import AlgrowClient, GeminiGenClient, ProviderError, VercelGatewayClient, _extract_json, requests
+from providers import AlgrowClient, GeminiGenClient, ProviderError, ProviderHTTPError, VercelGatewayClient, _extract_json, download, requests
 
 
 class ProviderParsingTests(unittest.TestCase):
+    @patch("providers.urllib.request.urlopen")
+    def test_download_resumes_partial_file_with_range(self, urlopen):
+        class Response:
+            status = 206
+            def __enter__(self): return self
+            def __exit__(self, *_args): pass
+            def read(self, _size):
+                if getattr(self, "used", False): return b""
+                self.used = True
+                return b"def"
+
+        urlopen.return_value = Response()
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "asset.png"
+            Path(f"{destination}.part").write_bytes(b"abc")
+            self.assertEqual(download("https://example.test/asset", destination), destination)
+            self.assertEqual(destination.read_bytes(), b"abcdef")
+            self.assertFalse(Path(f"{destination}.part").exists())
+        headers = urlopen.call_args.args[0].headers
+        self.assertEqual(headers.get("Range"), "bytes=3-")
+
     @patch("providers._json_request")
     def test_gateway_does_not_call_http_when_cost_reservation_is_rejected(self, request):
         reserved = []
@@ -163,6 +184,21 @@ class ProviderParsingTests(unittest.TestCase):
         self.assertEqual(url, "https://example.test/image.png")
         self.assertEqual(request.call_count, 3)
         self.assertEqual(download.call_count, 1)
+
+    @patch("providers.time.sleep")
+    @patch("providers.download")
+    @patch("providers._json_request")
+    def test_algrow_honors_retry_after_without_buying_again(self, request, download, sleep):
+        request.side_effect = [
+            {"job_id": "paid-job", "credits_used": 0.35},
+            ProviderHTTPError(429, "rate limited", retry_after=7),
+            {"status": "completed", "image_url": "https://example.test/image.png"},
+        ]
+        download.return_value = Path("/tmp/image.png")
+        client = AlgrowClient("test-key")
+        client.generate_image("prompt", Path("/tmp/image.png"))
+        sleep.assert_any_call(7.0)
+        self.assertEqual(request.call_count, 3)
 
     @patch("providers.time.sleep", return_value=None)
     @patch("providers.download")
