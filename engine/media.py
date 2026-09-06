@@ -25,7 +25,10 @@ def find_binary(candidates):
 
 FFMPEG = find_binary(FFMPEG_CANDIDATES)
 FFPROBE = find_binary(FFPROBE_CANDIDATES)
-WHISPER = find_binary(WHISPER_CANDIDATES)
+# Whisper is resolved when transcription is requested. Keeping it lazy allows
+# planning, provider and recovery tests to run without the optional local model
+# binary installed, while production still gets the same actionable error.
+WHISPER = None
 DEFAULT_LOCAL_PROCESS_TIMEOUT = 120.0
 
 
@@ -71,11 +74,12 @@ def probe(path):
 
 
 def transcribe(source, duration, workspace, model_path):
+    whisper = find_binary(WHISPER_CANDIDATES)
     workspace = Path(workspace)
     wav = workspace / "speech.wav"
     output = workspace / "transcript"
     run([FFMPEG, "-hide_banner", "-loglevel", "error", "-y", "-t", f"{duration:.3f}", "-i", str(source), "-vn", "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", str(wav)], timeout=600)
-    command = [WHISPER, "-m", str(model_path), "-f", str(wav), "-l", "auto", "-oj", "-of", str(output), "-ng", "-t", "8", "-np"]
+    command = [whisper, "-m", str(model_path), "-f", str(wav), "-l", "auto", "-oj", "-of", str(output), "-ng", "-t", "8", "-np"]
     try:
         run(command, timeout=max(600, int(duration * 2)))
     except RuntimeError:

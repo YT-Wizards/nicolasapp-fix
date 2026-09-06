@@ -28,6 +28,7 @@ from providers import (
     AlgrowClient, GeminiGenClient, VercelGatewayClient,
     PaidAssetRecoveryError, ProviderError, RegeneratableError,
 )
+from operations import OperationLedger, OperationRecoveryRequired
 
 
 stop_requested = threading.Event()
@@ -150,6 +151,8 @@ class Pipeline:
         self.asset_cache_dir = None
         self.checkpoint = {}
         self.checkpoint_lock = threading.RLock()
+        database_root = Path(config.get("user_data_dir") or Path.home() / "Library" / "Application Support" / "vyt")
+        self.operation_ledger = OperationLedger(database_root / "vyt.sqlite")
         self.prior_cost_breakdown = {"video": 0.0, "image": 0.0, "analysis": 0.0, "review": 0.0}
         self.presenter_reference_images = []
         self.presenter_reference = None
@@ -607,40 +610,70 @@ class Pipeline:
 
     def generate_image_scene(self, scene, retry_guidance=""):
         output = self.assets / f"{scene['id']}.png"
-        resume_job_id = self.pending_image_job_for(scene)
+        prompt = image_prompt(scene, retry_guidance)
+        operation_key = self.operation_ledger.operation_key(
+            self.config["id"], scene["id"], "image", "algrow", prompt,
+            {"model": "gpt-image-2", "aspect_ratio": "16:9", "fast": False},
+        )
+        try:
+            resume_job_id = self.pending_image_job_for(scene) or self.operation_ledger.prepare(
+                operation_key, self.config["id"], scene["id"], "algrow", "image",
+                self.operation_ledger.prompt_hash(prompt),
+            )
+        except OperationRecoveryRequired as error:
+            raise PaidAssetRecoveryError(str(error)) from error
         estimated = 0.0 if resume_job_id else 0.35 * self.algrow.CREDIT_USD
         self.reserve(estimated)
         try:
             try:
                 output, _remote_url = self.algrow.generate_image(
-                    image_prompt(scene, retry_guidance),
+                    prompt,
                     output,
                     timeout=self.remaining_time(IMAGE_OPERATION_TIMEOUT),
                     resume_job_id=resume_job_id,
-                    on_created=lambda job_id: self.save_pending_image_job(scene, job_id),
+                    on_created=lambda job_id: (
+                        self.operation_ledger.mark_submitted(operation_key, job_id),
+                        self.save_pending_image_job(scene, job_id),
+                    ),
                 )
             except RegeneratableError:
                 # Algrow explicitly marked this job terminal. Only now is it safe
                 # for the normal one-retry path to purchase a replacement image.
                 self.clear_pending_image_job(scene)
+                self.operation_ledger.mark_failed(operation_key, "provider terminal failure")
                 raise
         finally:
             self.release(estimated)
+        self.operation_ledger.mark_completed(operation_key, _remote_url)
         return self.review_asset(scene, output)
 
     def generate_video_scene(self, scene, retry_guidance=""):
         output = self.assets / f"{scene['id']}.mp4"
-        resume_uuid = self.pending_video_job_for(scene)
+        prompt = video_prompt(scene, retry_guidance)
+        operation_key = self.operation_ledger.operation_key(
+            self.config["id"], scene["id"], "video", "snapgen", prompt,
+            {"model": "veo-3.1-fast", "resolution": "720p", "duration": "8", "aspect_ratio": "16:9"},
+        )
+        try:
+            resume_uuid = self.pending_video_job_for(scene) or self.operation_ledger.prepare(
+                operation_key, self.config["id"], scene["id"], "snapgen", "video",
+                self.operation_ledger.prompt_hash(prompt),
+            )
+        except OperationRecoveryRequired as error:
+            raise PaidAssetRecoveryError(str(error)) from error
         estimated = 0.0 if resume_uuid else self.geminigen.ESTIMATED_CLIP_USD
         self.reserve(estimated)
         try:
             try:
                 self.geminigen.generate_video(
-                    video_prompt(scene, retry_guidance),
+                    prompt,
                     output,
                     timeout=self.remaining_time(VIDEO_OPERATION_TIMEOUT),
                     resume_uuid=resume_uuid,
-                    on_created=lambda conversion_uuid: self.save_pending_video_job(scene, conversion_uuid),
+                    on_created=lambda conversion_uuid: (
+                        self.operation_ledger.mark_submitted(operation_key, conversion_uuid),
+                        self.save_pending_video_job(scene, conversion_uuid),
+                    ),
                     reference_images=(
                         [self.presenter_reference]
                         if scene.get("presenter_broll") and self.presenter_reference else None
@@ -650,9 +683,11 @@ class Pipeline:
                 # Google explicitly failed this UUID; only this case permits the
                 # quality retry to purchase a fresh generation.
                 self.clear_pending_video_job(scene)
+                self.operation_ledger.mark_failed(operation_key, "provider terminal failure")
                 raise
         finally:
             self.release(estimated)
+        self.operation_ledger.mark_completed(operation_key, resume_uuid)
         return self.review_asset(scene, output)
 
     def generate_one(self, scene):
@@ -1162,6 +1197,7 @@ class Pipeline:
             except OSError:
                 pass
         shutil.rmtree(self.workspace, ignore_errors=True)
+        self.operation_ledger.close()
 
 
 def main():
