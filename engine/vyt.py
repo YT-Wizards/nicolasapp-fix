@@ -420,7 +420,7 @@ class Pipeline:
             self.save_checkpoint(completed_assets=completed)
             return path
 
-    def record_asset_review(self, scene, path, status):
+    def record_asset_review(self, scene, path, status, warnings=None):
         path = Path(path)
         try:
             with self.checkpoint_lock:
@@ -429,6 +429,8 @@ class Pipeline:
                     "file": path.name, "size": path.stat().st_size,
                     "mtime_ns": path.stat().st_mtime_ns, "status": status,
                 }
+                if warnings:
+                    records[scene["id"]]["warnings"] = list(warnings)
                 self.save_checkpoint(asset_reviews=records)
         except Exception as error:
             raise QualityReviewPendingError("El recurso pagado se conserva, pero no se pudo guardar su revisión. Comprueba el espacio disponible antes de reanudar.") from error
@@ -452,15 +454,24 @@ class Pipeline:
         thresholds = {"semantic_score": 70, "realism_score": 65 if is_video else 68, "integrity_score": 75}
         if is_video:
             thresholds.update(motion_score=65, continuity_score=75)
-        failed = not passed or (is_video and review.get("watermark") is True)
-        failed = failed or any(review_score(review, key, 0) < minimum for key, minimum in thresholds.items())
-        if failed:
+        hard_failure = bool(
+            (is_video and review.get("watermark") is True)
+            or review.get("safety_violation") is True
+            or review_score(review, "integrity_score", 0) < 50
+        )
+        soft_warnings = []
+        if not passed:
+            soft_warnings.append("AI review did not fully approve the editorial match")
+        for key, minimum in thresholds.items():
+            if review_score(review, key, 0) < minimum:
+                soft_warnings.append(f"{key} below preferred threshold")
+        if hard_failure:
             self.record_asset_review(scene, path, "rejected")
             Path(path).unlink(missing_ok=True)
             error_type = QualityReviewError if is_video else RegeneratableError
             raise error_type("Revisión rechazada: " + review_guidance(review, "use a simple, literal, ordinary real-world shot"))
         try:
-            self.record_asset_review(scene, path, "passed")
+            self.record_asset_review(scene, path, "passed", soft_warnings)
         except Exception as error:
             raise QualityReviewPendingError("El recurso pagado se conserva, pero no se pudo guardar su aprobación. Reanuda sin regenerarlo.") from error
         return path

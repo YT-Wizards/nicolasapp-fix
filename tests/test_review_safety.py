@@ -183,6 +183,21 @@ class ReviewRecoveryTests(unittest.TestCase):
         self.assertEqual(scene["type"], "image")
         pipeline.geminigen.generate_video.assert_not_called()
 
+    @patch("vyt.probe", return_value={"duration": 8, "width": 1920, "height": 1080})
+    def test_soft_editorial_warning_keeps_paid_asset(self, _probe):
+        pipeline = self.pipeline()
+        scene = {"id": "b011", "type": "image", "narration": "one phone"}
+        output = pipeline.assets / "b011.png"
+        output.write_bytes(b"x" * 2000)
+        pipeline.review_image = Mock(return_value={
+            **accepted(), "realism_score": 40, "pass": False,
+        })
+        self.assertEqual(pipeline.review_asset(scene, output), output)
+        receipt = pipeline.checkpoint["asset_reviews"]["b011"]
+        self.assertEqual(receipt["status"], "passed")
+        self.assertTrue(receipt["warnings"])
+        self.assertTrue(output.exists())
+
     def test_checkpoint_write_failure_does_not_repurchase(self):
         for failed_status in ("pending", "passed"):
             with self.subTest(status=failed_status):
