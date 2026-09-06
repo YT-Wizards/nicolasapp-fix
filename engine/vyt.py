@@ -22,6 +22,7 @@ from planning import (
     build_schedule, build_story_bible, enforce_presenter_broll,
     force_avatar_window, image_fallback_scene, plan_scenes,
     rebalance_scenes_for_budget, review_scene_plan, stratified_generation_order,
+    validate_scene_plan,
 )
 from prompts import IMAGE_REVIEW_PROMPT, PLANNER_SYSTEM, VIDEO_REVIEW_PROMPT, image_prompt, video_prompt
 from providers import (
@@ -908,6 +909,7 @@ class Pipeline:
             self.reviewer, scenes, bible, progress=review_progress,
             resume_reviewed=resumed_review, checkpoint=save_review_checkpoint,
         )
+        planning_warnings = validate_scene_plan(scenes, duration)
         force_avatar_window(scenes, qr_window)
         # Older builds could mutate a scene to avatar/image after a temporary
         # delivery failure while retaining its paid remote identifier. Restore
@@ -943,7 +945,11 @@ class Pipeline:
         qr_reminder = product_qr_reminder_window(scenes, qr_window, duration)
         if qr_reminder:
             qr_windows.append(qr_reminder)
-        self.save_checkpoint(reviewed_scenes=scenes, estimated_media=estimated_media)
+        self.save_checkpoint(
+            reviewed_scenes=scenes,
+            estimated_media=estimated_media,
+            planning_warnings=planning_warnings,
+        )
         if not scenes or scenes[0]["type"] != "avatar":
             raise RuntimeError("La planificación no comenzó con el avatar como estaba previsto.")
         requested_counts = {

@@ -1,5 +1,6 @@
 import json
 import math
+import re
 from collections import Counter
 
 from prompts import (
@@ -470,6 +471,70 @@ def _normalize_scene(scene):
         scene["presenter_broll_reason"] = ""
         scene["presenter_broll_value"] = 0
     return scene
+
+
+def _scene_text(value):
+    return re.sub(r"\s+", " ", str(value or "").strip().lower())
+
+
+def scene_fingerprint(scene):
+    """Return the stable semantic identity used by the pre-generation gate."""
+    prompt = scene.get("video_prompt") or scene.get("image_prompt") or scene.get("literal_subject")
+    return (
+        _scene_text(scene.get("literal_subject")),
+        _scene_text(prompt),
+        tuple(sorted(_scene_text(item) for item in scene.get("continuity_ids", []) if item)),
+    )
+
+
+def validate_scene_plan(scenes, duration):
+    """Validate timeline ranges and neutralize confirmed duplicate paid beats.
+
+    This is intentionally deterministic and conservative. Similar but distinct
+    scenes are only annotated; a scene is converted to the free presenter view
+    when its narration overlaps or its complete semantic fingerprint repeats
+    immediately, preventing a second paid asset for the same beat.
+    """
+    warnings = []
+    previous_end = 0.0
+    seen_narration = {}
+    seen_fingerprints = {}
+    for index, scene in enumerate(scenes or []):
+        try:
+            start = float(scene.get("start", 0))
+            end = float(scene.get("end", start))
+        except (TypeError, ValueError):
+            raise ValueError(f"La escena {scene.get('id', index)} tiene un rango temporal inválido.")
+        if start < -0.01 or end <= start or end > float(duration) + 0.25:
+            raise ValueError(f"La escena {scene.get('id', index)} está fuera de la duración del vídeo.")
+        if start < previous_end - 0.25:
+            raise ValueError(f"La escena {scene.get('id', index)} se solapa incorrectamente con la escena anterior.")
+        previous_end = end
+        narration = _scene_text(scene.get("narration"))
+        fingerprint = scene_fingerprint(scene)
+        duplicate_of = None
+        if narration and narration in seen_narration:
+            prior_index, prior_end = seen_narration[narration]
+            overlap = min(end, prior_end) - max(start, float(scenes[prior_index].get("start", 0)))
+            if overlap > 0 or abs(index - prior_index) <= 1:
+                duplicate_of = scenes[prior_index].get("id")
+                warnings.append({"scene_id": scene.get("id"), "kind": "repeated_narration", "duplicate_of": duplicate_of})
+        if fingerprint in seen_fingerprints and duplicate_of is None:
+            prior_index = seen_fingerprints[fingerprint]
+            if abs(index - prior_index) <= 2:
+                duplicate_of = scenes[prior_index].get("id")
+                warnings.append({"scene_id": scene.get("id"), "kind": "repeated_scene_fingerprint", "duplicate_of": duplicate_of})
+        if duplicate_of and scene.get("type") != "avatar":
+            scene["duplicate_of"] = duplicate_of
+            scene["duplicate_strategy"] = "presenter_fallback"
+            scene["requested_type"] = scene.get("requested_type", scene.get("type"))
+            scene["type"] = "avatar"
+            scene = _normalize_scene(scene)
+        if narration:
+            seen_narration[narration] = (index, end)
+        if fingerprint != ("", "", ()):
+            seen_fingerprints[fingerprint] = index
+    return warnings
 
 
 def enforce_presenter_broll(scenes, bible, max_share=0.06):

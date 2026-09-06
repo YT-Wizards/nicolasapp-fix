@@ -11,7 +11,7 @@ from planning import (
     analysis_reserve_for_duration, build_schedule, editorial_types, enforce_budget, enforce_presenter_broll,
     force_avatar_window, image_fallback_scene, make_beats,
     plan_scenes, rebalance_scenes_for_budget, review_scene_plan,
-    stratified_generation_order, visual_ratios_for_bible,
+    stratified_generation_order, validate_scene_plan, visual_ratios_for_bible,
 )
 from prompts import (
     IMAGE_REVIEW_PROMPT, SCENE_BATCH_PROMPT, SCENE_PLAN_REVIEW_PROMPT,
@@ -58,6 +58,20 @@ class MalformedFieldsPlanner:
 
 
 class PlanningTests(unittest.TestCase):
+    def test_scene_validation_converts_adjacent_duplicate_narration_to_free_presenter(self):
+        scenes = [
+            {"id": "b0001", "type": "image", "requested_type": "image", "start": 0, "end": 4, "narration": "one factual sentence", "literal_subject": "one object", "image_prompt": "one object on a table"},
+            {"id": "b0002", "type": "video", "requested_type": "video", "start": 4, "end": 8, "narration": "one factual sentence", "literal_subject": "one object", "video_prompt": "one object on a table"},
+        ]
+        warnings = validate_scene_plan(scenes, 8)
+        self.assertEqual(scenes[1]["type"], "avatar")
+        self.assertEqual(scenes[1]["duplicate_of"], "b0001")
+        self.assertEqual(warnings[0]["kind"], "repeated_narration")
+
+    def test_scene_validation_rejects_invalid_timeline_ranges(self):
+        with self.assertRaisesRegex(ValueError, "fuera"):
+            validate_scene_plan([{"id": "b0001", "type": "image", "start": 0, "end": 12}], 10)
+
     def test_post_analysis_rebalance_stays_inside_available_balance_and_buffer(self):
         scenes = [{
             "id": f"b{index + 1:04d}",
