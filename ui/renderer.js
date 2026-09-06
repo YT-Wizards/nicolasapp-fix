@@ -25,8 +25,7 @@ function applyLanguage(language) {
   const heroEyebrow = $('.hero-row .eyebrow'); if (heroEyebrow) heroEyebrow.textContent = english ? 'HEYGEN → FULL VIDEO' : 'HEYGEN → VÍDEO COMPLETO';
   const lede = $('.lede'); if (lede) lede.textContent = english ? 'Add the HeyGen video. VYT analyses the narration, creates the B-roll and delivers the final edit to Downloads.' : 'Añade el vídeo de HeyGen. VYT analiza la narración, crea el B-roll y entrega el montaje final en Descargas.';
   const titleLabel = document.querySelector('label[for="titleInput"]'); if (titleLabel) titleLabel.textContent = english ? 'Video title' : 'Título del vídeo'; const titleInput = $('#titleInput'); if (titleInput) titleInput.placeholder = english ? 'E.g. Why Walt Hayes Changed Everything' : 'Ej. Why Walt Hayes Changed Everything';
-  set('#fileTitle', english ? 'addVideo' : 'addVideo'); const fileMeta = $('#fileMeta'); if (fileMeta && !selectedVideo) fileMeta.textContent = english ? 'MP4 or MOV · 8–35 min · landscape · final audio included' : 'MP4 o MOV · 8–35 min · horizontal · audio final incluido';
-  const fileTitle = $('#fileTitle'); if (fileTitle && !selectedVideo) fileTitle.textContent = english ? 'Add HeyGen video' : 'Añadir vídeo de HeyGen';
+  const fileTitle = $('#fileTitle'); if (fileTitle && !selectedVideo) fileTitle.textContent = english ? 'Add HeyGen video' : 'Añadir vídeo de HeyGen'; const fileMeta = $('#fileMeta'); if (fileMeta && !selectedVideo) fileMeta.textContent = english ? 'MP4 or MOV · 8–35 min · landscape · final audio included' : 'MP4 o MOV · 8–35 min · horizontal · audio final incluido';
   const browse = $('#browseButton'); if (browse) browse.textContent = english ? 'Select' : 'Seleccionar';
   const toggles = $$('.toggle-row'); if (toggles[0]) { toggles[0].querySelector('strong').textContent = english ? 'Allow real brands' : 'Permitir marcas reales'; toggles[0].querySelector('small').textContent = english ? 'Only when the narration explicitly mentions a brand or product.' : 'Solo si la narración menciona expresamente una marca o producto.'; } if (toggles[1]) { toggles[1].querySelector('strong').textContent = english ? 'Add sales QR' : 'Añadir QR de venta'; toggles[1].querySelector('small').textContent = english ? 'A brief Bertha-style card, only during the product call to action.' : 'Tarjeta breve como Bertha, solo durante la llamada a la acción del producto.'; }
   const mix = document.querySelector('.mix-head span:first-child'); if (mix) mix.textContent = english ? 'Adaptive FaceTuber mix' : 'Mezcla FaceTuber adaptativa';
@@ -140,6 +139,9 @@ async function submit(testMode) {
     const productEnabled = $('#productQrToggle').checked;
     if (productEnabled && !selectedProductQr) throw new Error('Selecciona la tarjeta completa del QR.');
     const cardDataUrl = productEnabled ? selectedProductQr.dataUrl : '';
+    showError($('#formError'), currentLanguage === 'en'
+      ? (testMode ? 'Checking connections and preparing the 90-second test…' : 'Checking connections and preparing the full video…')
+      : (testMode ? 'Comprobando conexiones y preparando la prueba de 90 s…' : 'Comprobando conexiones y preparando el vídeo completo…'));
     await window.vyt.createJob({
       title, source: selectedVideo.path, branding: $('#brandingToggle').checked, testMode,
       productSale: productEnabled ? {
@@ -148,6 +150,8 @@ async function submit(testMode) {
       } : { enabled: false }
     });
     $('#createButton').disabled = false; $('#testButton').disabled = false;
+    showError($('#formError'), '');
+    showToast(currentLanguage === 'en' ? 'Test queued' : 'Prueba puesta en cola');
   } catch (error) {
     $('#createButton').disabled = false; $('#testButton').disabled = false;
     showError($('#formError'), error.message);
