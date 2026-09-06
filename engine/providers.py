@@ -39,6 +39,29 @@ class CircuitOpenError(ProviderError):
     """The provider is temporarily paused after repeated transient failures."""
 
 
+class ProviderRateLimitError(ProviderError):
+    """A paid POST could not acquire the provider-wide concurrency slot."""
+
+
+class ProviderRequestGate:
+    """Bound concurrent paid POST requests while leaving polling independent."""
+
+    def __init__(self, capacity=1):
+        self.capacity = max(1, int(capacity))
+        self._semaphore = threading.BoundedSemaphore(self.capacity)
+
+    def acquire(self, timeout=None):
+        acquired = self._semaphore.acquire(timeout=timeout)
+        if not acquired:
+            raise ProviderRateLimitError(
+                "El proveedor está ocupado; VYT mantiene el trabajo en cola sin comprar otro recurso."
+            )
+        return True
+
+    def release(self):
+        self._semaphore.release()
+
+
 class ProviderCircuitBreaker:
     """Small thread-safe breaker shared by paid provider adapters."""
 
@@ -80,11 +103,18 @@ class ProviderCircuitBreaker:
 
 _PROVIDER_CIRCUITS = {}
 _PROVIDER_CIRCUITS_LOCK = threading.Lock()
+_PROVIDER_GATES = {}
+_PROVIDER_GATES_LOCK = threading.Lock()
 
 
 def provider_circuit(name):
     with _PROVIDER_CIRCUITS_LOCK:
         return _PROVIDER_CIRCUITS.setdefault(str(name), ProviderCircuitBreaker())
+
+
+def provider_gate(name):
+    with _PROVIDER_GATES_LOCK:
+        return _PROVIDER_GATES.setdefault(str(name), ProviderRequestGate())
 
 
 def _is_transient_provider_error(error):
@@ -490,13 +520,14 @@ class VercelGatewayClient:
 class AlgrowClient:
     CREDIT_USD = 9.99 / 250.0
 
-    def __init__(self, api_key, circuit_breaker=None):
+    def __init__(self, api_key, circuit_breaker=None, request_gate=None):
         if not api_key:
             raise ProviderError("Falta la API key de Algrow.")
         self.api_key = api_key
         self.spent_usd = 0.0
         self._spend_lock = threading.Lock()
         self.circuit_breaker = circuit_breaker or provider_circuit("algrow")
+        self.request_gate = request_gate or provider_gate("algrow")
 
     @property
     def headers(self):
@@ -508,21 +539,25 @@ class AlgrowClient:
         job_id = str(resume_job_id or "").strip()
         if not job_id:
             payload = {"prompt": prompt, "model": "gpt-image-2", "aspect_ratio": "16:9", "fast": False}
-            self.circuit_breaker.before_request()
+            self.request_gate.acquire(timeout=_remaining_timeout(deadline, 90))
             try:
-                created = _json_request(
-                    "https://api.algrow.online/api/generate-image",
-                    method="POST",
-                    headers=self.headers,
-                    payload=payload,
-                    timeout=_remaining_timeout(deadline, 90),
-                )
-            except Exception as error:
-                if _is_transient_provider_error(error):
-                    self.circuit_breaker.record_failure()
-                raise
-            else:
-                self.circuit_breaker.record_success()
+                self.circuit_breaker.before_request()
+                try:
+                    created = _json_request(
+                        "https://api.algrow.online/api/generate-image",
+                        method="POST",
+                        headers=self.headers,
+                        payload=payload,
+                        timeout=_remaining_timeout(deadline, 90),
+                    )
+                except Exception as error:
+                    if _is_transient_provider_error(error):
+                        self.circuit_breaker.record_failure()
+                    raise
+                else:
+                    self.circuit_breaker.record_success()
+            finally:
+                self.request_gate.release()
             job_id = str(created.get("job_id") or "").strip()
             if not job_id:
                 raise ProviderError(f"Algrow no devolvió job_id: {str(created)[:600]}")
@@ -608,13 +643,14 @@ class AlgrowClient:
 class GeminiGenClient:
     ESTIMATED_CLIP_USD = 0.02
 
-    def __init__(self, api_key, circuit_breaker=None):
+    def __init__(self, api_key, circuit_breaker=None, request_gate=None):
         if not api_key:
             raise ProviderError("Falta la API key de GeminiGen.")
         self.api_key = api_key
         self.spent_usd = 0.0
         self._spend_lock = threading.Lock()
         self.circuit_breaker = circuit_breaker or provider_circuit("snapgen")
+        self.request_gate = request_gate or provider_gate("snapgen")
 
     def ensure_available(self, minimum_success_rate=80.0):
         """Fail for free before any paid work when SnapGen reports Veo trouble."""
@@ -689,35 +725,40 @@ class GeminiGenClient:
             multipart.append(("mode_image", (None, "ingredient")))
         conversion_uuid = str(resume_uuid or "").strip()
         if not conversion_uuid:
-            self.circuit_breaker.before_request()
+            self.request_gate.acquire(timeout=_remaining_timeout(deadline, 120))
             try:
-                response = requests.post(
-                    "https://api.snapgen.ai/uapi/v1/video-gen/veo",
-                    headers={**self.headers, "Accept": "application/json"},
-                    files=multipart,
-                    timeout=_remaining_timeout(deadline, 120),
-                )
-                if not response.ok:
-                    retry_after = None
-                    try:
-                        retry_after = float(response.headers.get("Retry-After"))
-                    except (AttributeError, TypeError, ValueError):
-                        pass
-                    raise ProviderHTTPError(
-                        response.status_code, response.text[:800], retry_after=retry_after,
+                self.circuit_breaker.before_request()
+                try:
+                    response = requests.post(
+                        "https://api.snapgen.ai/uapi/v1/video-gen/veo",
+                        headers={**self.headers, "Accept": "application/json"},
+                        files=multipart,
+                        timeout=_remaining_timeout(deadline, 120),
                     )
-                created = response.json()
-            except requests.RequestException as error:
-                self.circuit_breaker.record_failure()
-                raise ProviderError(str(error)) from error
-            except ProviderHTTPError as error:
-                if _is_transient_provider_error(error):
+                    if not response.ok:
+                        retry_after = None
+                        try:
+                            retry_after = float(response.headers.get("Retry-After"))
+                        except (AttributeError, TypeError, ValueError):
+                            pass
+                        raise ProviderHTTPError(
+                            response.status_code, response.text[:800], retry_after=retry_after,
+                        )
+                    created = response.json()
+                except requests.RequestException as error:
                     self.circuit_breaker.record_failure()
-                raise
-            except ValueError as error:
-                raise ProviderError("SnapGen devolvió una respuesta que no era JSON.") from error
-            else:
-                self.circuit_breaker.record_success()
+                    raise ProviderError(str(error)) from error
+                except ProviderHTTPError as error:
+                    if _is_transient_provider_error(error):
+                        self.circuit_breaker.record_failure()
+                    raise
+                except ValueError as error:
+                    self.circuit_breaker.record_failure()
+                    raise ProviderError("SnapGen devolvió una respuesta que no era JSON.") from error
+                else:
+                    self.circuit_breaker.record_success()
+            finally:
+                self.request_gate.release()
             payload = created.get("data") if isinstance(created.get("data"), dict) else created
             conversion_uuid = str(payload.get("uuid") or "").strip()
             if not conversion_uuid:

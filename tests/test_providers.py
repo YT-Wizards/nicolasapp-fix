@@ -11,7 +11,9 @@ from providers import (
     AlgrowClient,
     CircuitOpenError,
     GeminiGenClient,
+    ProviderRateLimitError,
     ProviderCircuitBreaker,
+    ProviderRequestGate,
     ProviderError,
     ProviderHTTPError,
     VercelGatewayClient,
@@ -22,6 +24,15 @@ from providers import (
 
 
 class ProviderParsingTests(unittest.TestCase):
+    def test_paid_request_gate_serializes_provider_posts(self):
+        gate = ProviderRequestGate(capacity=1)
+        self.assertTrue(gate.acquire(timeout=0))
+        with self.assertRaises(ProviderRateLimitError):
+            gate.acquire(timeout=0)
+        gate.release()
+        self.assertTrue(gate.acquire(timeout=0))
+        gate.release()
+
     def test_circuit_breaker_opens_then_allows_one_probe_after_cooldown(self):
         now = [100.0]
         breaker = ProviderCircuitBreaker(failure_threshold=2, cooldown=30, clock=lambda: now[0])
