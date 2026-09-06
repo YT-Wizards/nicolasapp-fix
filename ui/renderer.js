@@ -456,7 +456,8 @@ $('#testConnections').onclick = async () => {
       language: $('#languageSelect').value
     });
     const result = await window.vyt.testSettings();
-    showError($('#settingsError'), result.errors.length ? result.errors.join(' · ') : 'Conexiones correctas: Claude y Gemini están disponibles.');
+    const connectionMessages = [...(result.errors || []), ...(result.warnings || [])];
+    showError($('#settingsError'), connectionMessages.length ? connectionMessages.join(' · ') : 'Conexiones correctas: Claude y Gemini están disponibles.');
     await refreshSettings();
   } catch (error) { showError($('#settingsError'), error.message); }
 };

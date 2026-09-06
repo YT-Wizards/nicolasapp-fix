@@ -503,7 +503,19 @@ async function testSettings() {
       result.geminigen = !invalidKey;
       if (!result.geminigen) result.errors.push('GeminiGen: la API key guardada ya no es válida. Crea y guarda una nueva.');
     }
-    catch (error) { result.errors.push(`GeminiGen: ${error.message}`); }
+    catch (error) {
+      // The synthetic history ID is only a credential probe. SnapGen can keep
+      // this endpoint open without returning while the real generation API is
+      // healthy, so a timeout must not block a job when the paid path has its
+      // own public Veo health gate and retry/recovery handling.
+      const timedOut = error?.name === 'TimeoutError' || /aborted due to timeout|timed out/i.test(String(error?.message || error));
+      if (timedOut) {
+        result.geminigen = true;
+        result.warnings = [...(result.warnings || []), 'GeminiGen: проверка ключа не ответила вовремя; продолжена проверка рабочего Veo endpoint.'];
+      } else {
+        result.errors.push(`GeminiGen: ${error.message}`);
+      }
+    }
   }
   if (s.algrowKey) {
     try {
