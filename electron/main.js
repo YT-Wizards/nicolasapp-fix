@@ -6,6 +6,7 @@ const crypto = require('crypto');
 const channels = require('./channels');
 const { isFullVideoDurationAllowed } = require('./duration');
 const { JobStore } = require('./job-store');
+const { selectRunnableJobs } = require('./job-queue');
 
 const MAX_RUNNING = 2;
 const FULL_MAX_COST_USD = 7.0;
@@ -269,9 +270,7 @@ function completeJob(job, result) {
 function runNextJobs() {
   // A cancelled job keeps its slot until the Python process has really closed.
   // This prevents a slow provider call from briefly creating a third process.
-  const running = processes.size;
-  const slots = Math.max(0, MAX_RUNNING - running);
-  state.jobs.filter((job) => job.status === 'queued').slice(0, slots).forEach(startJob);
+  selectRunnableJobs(state.jobs, processes.keys(), MAX_RUNNING).forEach(startJob);
 }
 
 function startJob(job) {
