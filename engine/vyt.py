@@ -304,6 +304,8 @@ class Pipeline:
         # Paid media lives beside its checkpoint until the final video passes QA.
         # The disposable workspace remains reserved for review strips and renders.
         self.assets = self.asset_cache_dir
+        self.segments = self.asset_cache_dir / "segments"
+        self.segments.mkdir(parents=True, exist_ok=True)
         try:
             loaded = json.loads(self.checkpoint_path.read_text()) if self.checkpoint_path.exists() else {}
             self.checkpoint = loaded if loaded.get("version") == ANALYSIS_CACHE_VERSION else {}
@@ -1132,6 +1134,9 @@ class Pipeline:
         rendered = []
         self.generated_counts = {"video": 0, "image": 0, "avatar": 0, "split": 0, "still": 0}
         total = len(scenes)
+        saved_segments = self.checkpoint.get("rendered_segments")
+        if not isinstance(saved_segments, dict):
+            saved_segments = {}
         self.event(77, "Montando el vídeo", f"0 de {total} planos")
         for index, scene in enumerate(scenes):
             self.check_stop()
@@ -1144,11 +1149,30 @@ class Pipeline:
                     )
                 scene["type"] = "avatar"
             self.generated_counts[scene["type"]] = self.generated_counts.get(scene["type"], 0) + 1
-            render_segment(
-                scene, source, asset, segment,
-                product_card=product_card,
-                product_overlay=product_overlay_for_scene(scene, qr_windows),
-            )
+            saved_name = saved_segments.get(scene["id"])
+            reusable = self.segments / str(saved_name) if saved_name else segment
+            can_reuse = reusable.exists() and reusable.stat().st_size > 1000
+            if can_reuse:
+                try:
+                    segment_info = probe(reusable)
+                    can_reuse = (
+                        abs(segment_info["duration"] - float(scene["duration"])) <= max(0.18, 2.0 / 30.0)
+                        and segment_info["width"] == 1920
+                        and segment_info["height"] == 1080
+                    )
+                except Exception:
+                    can_reuse = False
+            if can_reuse:
+                segment = reusable
+            else:
+                segment.unlink(missing_ok=True)
+                render_segment(
+                    scene, source, asset, segment,
+                    product_card=product_card,
+                    product_overlay=product_overlay_for_scene(scene, qr_windows),
+                )
+                saved_segments[scene["id"]] = segment.name
+                self.save_checkpoint(rendered_segments=saved_segments)
             rendered.append(segment)
             self.event(77 + 19 * (index + 1) / total, "Montando el vídeo", f"Plano {index + 1} de {total}", units_done=index + 1, units_total=total)
 
