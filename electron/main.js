@@ -66,6 +66,7 @@ function persistHistory() {
 
 function publicState() {
   return {
+    language: settingsStatus().language,
     jobs: state.jobs.map(({ secretConfig, productSale, ...job }) => ({
       ...job,
       productSale: { enabled: Boolean(productSale?.enabled) },
@@ -106,10 +107,12 @@ function getSecrets() {
 
 function settingsStatus() {
   const s = getSecrets();
+  const saved = encryptedSettings();
   return {
     geminigen: Boolean(s.geminigenKey),
     algrow: Boolean(s.algrowKey),
-    gateway: Boolean(s.gatewayKey)
+    gateway: Boolean(s.gatewayKey),
+    language: saved.language === 'en' ? 'en' : 'es'
   };
 }
 
@@ -664,6 +667,7 @@ ipcMain.handle('settings-save', (_event, incoming) => {
   for (const key of ['geminigenKey', 'algrowKey', 'gatewayKey']) {
     if (typeof incoming[key] === 'string' && incoming[key].trim()) next[key] = encryptValue(incoming[key].trim());
   }
+  if (incoming?.language === 'en' || incoming?.language === 'es') next.language = incoming.language;
   delete next.openrouterKey;
   delete next.plannerModel;
   writeJson(userFile('settings.secure.json'), next);

@@ -8,6 +8,35 @@ let channelsLoaded = false;
 let showChannelEmails = false;
 let editingChannelId = null;
 let selectedChannelLabels = new Set();
+let currentLanguage = 'es';
+
+const translations = {
+  es: { create: 'Crear', history: 'Historial', channels: 'Canales', settings: 'Ajustes', approvedStyle: 'Ver estilo aprobado', configure: 'Configurar APIs', saved: 'Claves guardadas', production: 'Producción', progress: 'Aquí verás el progreso real', progressHelp: 'Fase actual, porcentaje, tiempo restante y coste consumido.', results: 'RESULTADOS', simpleHistory: 'Historial sencillo', historyHelp: 'Solo se conserva el vídeo final y su coste.', personal: 'GESTOR PERSONAL', channelHelp: 'Accesos, estado y proxy de tus canales, separados de la producción de vídeo.', search: 'Buscar canal o correo…', showEmails: 'Mostrar correos', hideEmails: 'Ocultar correos', import: 'Importar', newChannel: '+ Nuevo canal', settingsEyebrow: 'CONEXIONES SEGURAS', settingsCopy: 'Las claves quedan cifradas con el llavero de este Mac. Nunca aparecen en el vídeo ni en el historial.', check: 'Comprobar', saveConnections: 'Guardar conexiones', noVideos: 'Aún no hay vídeos terminados', noVideosHelp: 'Los resultados aparecerán aquí, sin escenas ni archivos temporales.', openVideo: 'Abrir vídeo', noFile: 'Sin archivo', recovered: 'recuperados', charged: 'cobrados', operations: 'operaciones', channelsCount: 'canales', assigned: 'con proxy asignado', loading: 'Cargando tus canales…', noMatches: 'No hay canales que coincidan.' },
+  en: { create: 'Create', history: 'History', channels: 'Channels', settings: 'Settings', approvedStyle: 'View approved style', configure: 'Configure APIs', saved: 'Keys saved', production: 'Production', progress: 'Real progress will appear here', progressHelp: 'Current phase, percentage, time remaining and spend.', results: 'RESULTS', simpleHistory: 'Simple history', historyHelp: 'Only the final video and its cost are kept.', personal: 'PERSONAL MANAGER', channelHelp: 'Access, status and proxy for your channels, separate from video production.', search: 'Search channel or email…', showEmails: 'Show emails', hideEmails: 'Hide emails', import: 'Import', newChannel: '+ New channel', settingsEyebrow: 'SECURE CONNECTIONS', settingsCopy: 'Keys are encrypted with this Mac’s Keychain. They never appear in the video or history.', check: 'Check', saveConnections: 'Save connections', noVideos: 'No finished videos yet', noVideosHelp: 'Results will appear here without scenes or temporary files.', openVideo: 'Open video', noFile: 'No file', recovered: 'recovered', charged: 'charged', operations: 'operations', channelsCount: 'channels', assigned: 'with proxy assigned', loading: 'Loading your channels…', noMatches: 'No matching channels.' }
+};
+function t(key) { return translations[currentLanguage]?.[key] || translations.es[key] || key; }
+function applyLanguage(language) {
+  currentLanguage = language === 'en' ? 'en' : 'es';
+  document.documentElement.lang = currentLanguage;
+  const set = (selector, key) => { const element = $(selector); if (element) element.textContent = t(key); };
+  set('[data-view="create"]', 'create'); set('[data-view="history"]', 'history'); set('[data-view="channels"]', 'channels'); $('#settingsButton')?.setAttribute('aria-label', t('settings')); set('#styleButton', 'approvedStyle');
+  const english = currentLanguage === 'en';
+  const heroTitle = $('.hero-row h1'); if (heroTitle) heroTitle.innerHTML = english ? 'A finished video.<br><em>Without editing.</em>' : 'Un vídeo terminado.<br><em>Sin editar nada.</em>';
+  const heroEyebrow = $('.hero-row .eyebrow'); if (heroEyebrow) heroEyebrow.textContent = english ? 'HEYGEN → FULL VIDEO' : 'HEYGEN → VÍDEO COMPLETO';
+  const lede = $('.lede'); if (lede) lede.textContent = english ? 'Add the HeyGen video. VYT analyses the narration, creates the B-roll and delivers the final edit to Downloads.' : 'Añade el vídeo de HeyGen. VYT analiza la narración, crea el B-roll y entrega el montaje final en Descargas.';
+  const titleLabel = document.querySelector('label[for="titleInput"]'); if (titleLabel) titleLabel.textContent = english ? 'Video title' : 'Título del vídeo'; const titleInput = $('#titleInput'); if (titleInput) titleInput.placeholder = english ? 'E.g. Why Walt Hayes Changed Everything' : 'Ej. Why Walt Hayes Changed Everything';
+  set('#fileTitle', english ? 'addVideo' : 'addVideo'); const fileMeta = $('#fileMeta'); if (fileMeta && !selectedVideo) fileMeta.textContent = english ? 'MP4 or MOV · 8–35 min · landscape · final audio included' : 'MP4 o MOV · 8–35 min · horizontal · audio final incluido';
+  const fileTitle = $('#fileTitle'); if (fileTitle && !selectedVideo) fileTitle.textContent = english ? 'Add HeyGen video' : 'Añadir vídeo de HeyGen';
+  const browse = $('#browseButton'); if (browse) browse.textContent = english ? 'Select' : 'Seleccionar';
+  const toggles = $$('.toggle-row'); if (toggles[0]) { toggles[0].querySelector('strong').textContent = english ? 'Allow real brands' : 'Permitir marcas reales'; toggles[0].querySelector('small').textContent = english ? 'Only when the narration explicitly mentions a brand or product.' : 'Solo si la narración menciona expresamente una marca o producto.'; } if (toggles[1]) { toggles[1].querySelector('strong').textContent = english ? 'Add sales QR' : 'Añadir QR de venta'; toggles[1].querySelector('small').textContent = english ? 'A brief Bertha-style card, only during the product call to action.' : 'Tarjeta breve como Bertha, solo durante la llamada a la acción del producto.'; }
+  const mix = document.querySelector('.mix-head span:first-child'); if (mix) mix.textContent = english ? 'Adaptive FaceTuber mix' : 'Mezcla FaceTuber adaptativa';
+  const limit = document.querySelector('.limit-note'); if (limit) limit.textContent = english ? 'Full videos of 8–35 min · limit: $7.00 per video · 90-second test: $1.50 · maximum two at a time · 1080p output' : 'Vídeos completos de 8–35 min · límite: 7,00 $ por vídeo · prueba de 90 s: 1,50 $ · máximo dos a la vez · salida 1080p';
+  set('.panel-title span:first-child', 'production'); set('#jobsEmpty strong', 'progress'); set('#jobsEmpty p', 'progressHelp');
+  set('#historyView .eyebrow', 'results'); set('#historyView h2', 'simpleHistory'); set('#historyView .history-head p', 'historyHelp'); set('#channelsView .eyebrow', 'personal'); set('#channelsView h2', 'channels'); set('#channelsView .channels-head p', 'channelHelp');
+  const search = $('#channelSearch'); if (search) search.placeholder = t('search'); set('#toggleChannelEmails', showChannelEmails ? 'hideEmails' : 'showEmails'); set('#importChannelsButton', 'import'); set('#newChannelButton', 'newChannel');
+  set('#settingsDialog .eyebrow', 'settingsEyebrow'); set('#settingsDialog h3', 'settings'); set('#settingsDialog .modal-copy', 'settingsCopy'); set('#testConnections', 'check'); set('#saveSettings', 'saveConnections');
+  renderJobs(); renderHistory(); if (channelsLoaded) { renderChannelFilters(); renderChannels(); }
+}
 
 const approvedStyle = `SUBJECT: [The exact factual subject, action, place and era described by this 4–6 second narration beat]. Show only what is supported by the narration. Recurring subjects keep the same factual written description, but every image and clip is created independently so a previous composition is never reused. Generic examples may vary.
 
@@ -46,11 +75,13 @@ function showToast(message) {
 
 async function refreshSettings() {
   const status = await window.vyt.getSettingsStatus();
+  applyLanguage(status.language);
+  $('#languageSelect').value = status.language;
   $('#settingsStatus').innerHTML = [
     ['GeminiGen', status.geminigen], ['Algrow', status.algrow], ['Vercel AI', status.gateway]
   ].map(([label, ok]) => `<span class="${ok ? 'ok' : ''}">${ok ? '✓' : '×'} ${label}</span>`).join('');
   const ready = status.geminigen && status.algrow && status.gateway;
-  $('#connectionPill').textContent = ready ? 'Claves guardadas' : 'Configurar APIs';
+  $('#connectionPill').textContent = ready ? t('saved') : t('configure');
   $('#connectionPill').classList.toggle('connected', ready);
   return ready;
 }
@@ -126,15 +157,15 @@ async function submit(testMode) {
 
 function renderJobs() {
   const active = appState.jobs.filter((j) => !['completed', 'failed', 'cancelled'].includes(j.status));
-  $('#capacityLabel').textContent = `${active.filter((j) => j.status === 'running').length} de 2 activas`;
+  $('#capacityLabel').textContent = currentLanguage === 'en' ? `${active.filter((j) => j.status === 'running').length} of 2 active` : `${active.filter((j) => j.status === 'running').length} de 2 activas`;
   $('#jobsEmpty').style.display = active.length ? 'none' : 'flex';
   $('#jobsList').innerHTML = active.map((job) => `
     <article class="job-card">
       <div class="job-title-row"><strong>${escapeHtml(job.title)}</strong><span class="job-percent">${Math.round(job.progress || 0)}%</span></div>
       <div class="progress-track"><i style="width:${Math.max(0, Math.min(100, job.progress || 0))}%"></i></div>
-      <div class="job-detail"><span>${escapeHtml(job.phase || 'En cola')}</span><span>${job.status === 'queued' ? 'esperando turno' : formatEta(job.etaSeconds)}</span></div>
-      <div class="job-cost"><span>${escapeHtml(job.detail || (job.testMode ? 'Prueba de 90 s' : 'Vídeo completo'))}</span><b>${Number(job.spentUsd || 0).toFixed(2)} $ / ${Number(job.maxCostUsd || (job.testMode ? 1.5 : 7)).toFixed(2)} $</b></div>
-      <div class="job-metrics"><span>${escapeHtml(statusLabel(job.status))}</span><span>${costMetric(job.costLedger, 'avoided_duplicate')} recuperados</span><span>${costMetric(job.costLedger, 'charged')} cobrados</span><span>${operationMetric(job.providerOperations)} operaciones</span></div>
+      <div class="job-detail"><span>${escapeHtml(job.phase || statusLabel('queued'))}</span><span>${job.status === 'queued' ? (currentLanguage === 'en' ? 'waiting for turn' : 'esperando turno') : formatEta(job.etaSeconds)}</span></div>
+      <div class="job-cost"><span>${escapeHtml(job.detail || (job.testMode ? (currentLanguage === 'en' ? '90-second test' : 'Prueba de 90 s') : (currentLanguage === 'en' ? 'Full video' : 'Vídeo completo')))}</span><b>${Number(job.spentUsd || 0).toFixed(2)} $ / ${Number(job.maxCostUsd || (job.testMode ? 1.5 : 7)).toFixed(2)} $</b></div>
+      <div class="job-metrics"><span>${escapeHtml(statusLabel(job.status))}</span><span>${costMetric(job.costLedger, 'avoided_duplicate')} ${t('recovered') || 'recuperados'}</span><span>${costMetric(job.costLedger, 'charged')} ${t('charged') || 'cobrados'}</span><span>${operationMetric(job.providerOperations)} ${t('operations') || 'operaciones'}</span></div>
       ${job.warning ? `<div class="job-warning">${escapeHtml(job.warning)}</div>` : ''}
       <div class="job-actions"><button data-cancel="${job.id}">Cancelar</button></div>
     </article>`).join('');
@@ -142,7 +173,8 @@ function renderJobs() {
 }
 
 function statusLabel(status) {
-  return ({ queued: 'En cola', running: 'En producción', paused: 'En pausa', waiting_for_provider: 'Esperando provider', waiting_for_download: 'Esperando descarga', rendering: 'Montando', recoverable: 'Reanudable' })[status] || status || 'En cola';
+  const labels = { queued: currentLanguage === 'en' ? 'Queued' : 'En cola', running: currentLanguage === 'en' ? 'In production' : 'En producción', paused: currentLanguage === 'en' ? 'Paused' : 'En pausa', waiting_for_provider: currentLanguage === 'en' ? 'Waiting for provider' : 'Esperando provider', waiting_for_download: currentLanguage === 'en' ? 'Waiting for download' : 'Esperando descarga', rendering: currentLanguage === 'en' ? 'Rendering' : 'Montando', recoverable: currentLanguage === 'en' ? 'Resumable' : 'Reanudable' };
+  return labels[status] || status || labels.queued;
 }
 
 function costMetric(ledger, kind) {
@@ -158,7 +190,7 @@ function operationMetric(summary) {
 
 function renderHistory() {
   if (!appState.history.length) {
-    $('#historyList').innerHTML = '<div class="empty-state"><strong>Aún no hay vídeos terminados</strong><p>Los resultados aparecerán aquí, sin escenas ni archivos temporales.</p></div>';
+    $('#historyList').innerHTML = `<div class="empty-state"><strong>${t('noVideos')}</strong><p>${t('noVideosHelp')}</p></div>`;
     return;
   }
   $('#historyList').innerHTML = appState.history.map((item) => {
@@ -174,7 +206,7 @@ function renderHistory() {
     <article class="history-item">
       <div><strong>${escapeHtml(item.title)}</strong><small>${item.status === 'completed' ? `${formatDuration(item.duration)} · ${new Date(item.completedAt).toLocaleString('es-ES')}${production}` : escapeHtml(item.error || 'No terminado')}</small>${item.warning ? `<small>${escapeHtml(item.warning)}</small>` : ''}${costDetail ? `<small>${costDetail}</small>` : ''}</div>
       <div class="history-cost">${Number(item.costUsd || 0).toFixed(2)} $</div>
-      <button data-open="${escapeHtml(item.outputPath)}" ${item.outputPath ? '' : 'disabled'}>${item.status === 'completed' ? 'Abrir vídeo' : 'Sin archivo'}</button>
+      <button data-open="${escapeHtml(item.outputPath)}" ${item.outputPath ? '' : 'disabled'}>${item.status === 'completed' ? t('openVideo') : t('noFile')}</button>
     </article>`;
   }).join('');
   $$('[data-open]').forEach((button) => button.onclick = () => window.vyt.openOutput(button.dataset.open));
@@ -210,11 +242,11 @@ function visibleChannels() {
 
 function renderChannels() {
   const items = visibleChannels();
-  $('#channelsSummary').innerHTML = `<strong>${channelsState.channels.length}</strong><span>canales</span>`;
-  $('#channelsAssigned').textContent = `${channelsState.channels.filter((item) => item.proxy).length} con proxy asignado`;
+  $('#channelsSummary').innerHTML = `<strong>${channelsState.channels.length}</strong><span>${t('channelsCount')}</span>`;
+  $('#channelsAssigned').textContent = `${channelsState.channels.filter((item) => item.proxy).length} ${t('assigned')}`;
   $('#toggleChannelEmails').textContent = showChannelEmails ? 'Ocultar correos' : 'Mostrar correos';
   $('#channelsEmpty').style.display = items.length ? 'none' : 'block';
-  $('#channelsEmpty').textContent = channelsLoaded ? 'No hay canales que coincidan.' : 'Cargando tus canales…';
+  $('#channelsEmpty').textContent = channelsLoaded ? t('noMatches') : t('loading');
   $('#channelsBody').innerHTML = items.map((channel) => {
     const identity = channel.channel_name || channel.gmail || 'Sin nombre';
     return `<tr>
@@ -380,6 +412,13 @@ $('#dropZone').onclick = (event) => { if (event.target.id !== 'browseButton') se
 $('#createButton').onclick = () => submit(false);
 $('#testButton').onclick = () => submit(true);
 $('#settingsButton').onclick = async () => { await refreshSettings(); $('#settingsDialog').showModal(); };
+$('#languageSelect').onchange = async () => {
+  try {
+    applyLanguage($('#languageSelect').value);
+    await window.vyt.saveSettings({ language: $('#languageSelect').value });
+    showToast(currentLanguage === 'en' ? 'Language changed to English' : 'Idioma cambiado a español');
+  } catch (error) { showError($('#settingsError'), error.message); }
+};
 $('#styleButton').onclick = () => { $('#stylePrompt').textContent = approvedStyle; $('#styleDialog').showModal(); };
 $('#channelSearch').oninput = renderChannels;
 $('#channelProxyFilter').onchange = renderChannels;
@@ -400,7 +439,8 @@ $('#saveSettings').onclick = async () => {
     await window.vyt.saveSettings({
       geminigenKey: $('#geminigenKey').value,
       algrowKey: $('#algrowKey').value,
-      gatewayKey: $('#gatewayKey').value
+      gatewayKey: $('#gatewayKey').value,
+      language: $('#languageSelect').value
     });
     $('#geminigenKey').value = ''; $('#algrowKey').value = ''; $('#gatewayKey').value = '';
     await refreshSettings();
@@ -412,7 +452,8 @@ $('#testConnections').onclick = async () => {
     await window.vyt.saveSettings({
       geminigenKey: $('#geminigenKey').value,
       algrowKey: $('#algrowKey').value,
-      gatewayKey: $('#gatewayKey').value
+      gatewayKey: $('#gatewayKey').value,
+      language: $('#languageSelect').value
     });
     const result = await window.vyt.testSettings();
     showError($('#settingsError'), result.errors.length ? result.errors.join(' · ') : 'Conexiones correctas: Claude y Gemini están disponibles.');
@@ -420,6 +461,6 @@ $('#testConnections').onclick = async () => {
   } catch (error) { showError($('#settingsError'), error.message); }
 };
 
-window.vyt.onState(render);
-window.vyt.getState().then(render);
+window.vyt.onState((state) => { if (state.language) applyLanguage(state.language); render(state); });
+window.vyt.getState().then((state) => { if (state.language) applyLanguage(state.language); render(state); });
 refreshSettings();
