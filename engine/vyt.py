@@ -678,6 +678,8 @@ class Pipeline:
                         self.operation_ledger.mark_submitted(operation_key, job_id),
                         self.save_pending_image_job(scene, job_id),
                     ),
+                    on_stage=lambda stage: self.operation_ledger.mark_polling(operation_key)
+                    if stage == "polling" else self.operation_ledger.mark_download_pending(operation_key),
                 )
             except ProviderTemporarilyUnavailableError as error:
                 # No paid POST was accepted. Clear the prepared ledger row so
@@ -733,6 +735,8 @@ class Pipeline:
                         self.operation_ledger.mark_submitted(operation_key, conversion_uuid),
                         self.save_pending_video_job(scene, conversion_uuid),
                     ),
+                    on_stage=lambda stage: self.operation_ledger.mark_polling(operation_key)
+                    if stage == "polling" else self.operation_ledger.mark_download_pending(operation_key),
                     reference_images=(
                         [self.presenter_reference]
                         if scene.get("presenter_broll") and self.presenter_reference else None

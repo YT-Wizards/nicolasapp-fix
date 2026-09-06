@@ -548,7 +548,7 @@ class AlgrowClient:
     def headers(self):
         return {"Authorization": f"Bearer {self.api_key}"}
 
-    def generate_image(self, prompt, output_path, timeout=600, resume_job_id=None, on_created=None):
+    def generate_image(self, prompt, output_path, timeout=600, resume_job_id=None, on_created=None, on_stage=None):
         deadline = time.monotonic() + max(0.0, float(timeout))
         resumed_existing_job = bool(str(resume_job_id or "").strip())
         job_id = str(resume_job_id or "").strip()
@@ -584,6 +584,8 @@ class AlgrowClient:
                 # interrupted from this point onward, the next run resumes this
                 # exact job instead of issuing another paid POST.
                 on_created(job_id)
+        if on_stage:
+            on_stage("polling")
         poll_errors = 0
         last_poll_error = None
         while time.monotonic() < deadline:
@@ -622,6 +624,8 @@ class AlgrowClient:
                     # Some completions publish the result URL a few polls later.
                     _sleep_before(deadline, 5)
                     continue
+                if on_stage:
+                    on_stage("download_pending")
                 last_download_error = None
                 for attempt in range(6):
                     try:
@@ -711,7 +715,7 @@ class GeminiGenClient:
     def headers(self):
         return {"x-api-key": self.api_key}
 
-    def generate_video(self, prompt, output_path, timeout=1500, resume_uuid=None, on_created=None, reference_images=None):
+    def generate_video(self, prompt, output_path, timeout=1500, resume_uuid=None, on_created=None, on_stage=None, reference_images=None):
         # Every ordinary beat is an independent text-to-video request.  A small
         # number of presenter-continuity beats may include the *source presenter*
         # under SnapGen's documented `ref_images` field.  We never feed a prior
@@ -782,6 +786,8 @@ class GeminiGenClient:
                 self.spent_usd += self.ESTIMATED_CLIP_USD
             if on_created:
                 on_created(conversion_uuid)
+        if on_stage:
+            on_stage("polling")
         last_percentage = 0
         poll_errors = 0
         download_errors = 0
@@ -858,6 +864,8 @@ class GeminiGenClient:
                 usable = [item for item in valid if int(item.get("has_watermark") or 0) == 0]
                 if not usable:
                     raise RegeneratableError("GeminiGen devolvió un clip con marca de agua.")
+                if on_stage:
+                    on_stage("download_pending")
                 destination = Path(output_path)
                 partial = destination.with_suffix(destination.suffix + ".part")
                 destination.parent.mkdir(parents=True, exist_ok=True)

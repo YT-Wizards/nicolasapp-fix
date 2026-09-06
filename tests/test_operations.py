@@ -90,6 +90,18 @@ class OperationLedgerTests(unittest.TestCase):
             self.assertEqual(totals["avoided_duplicate"], 0.14)
             ledger.close()
 
+    def test_provider_operation_stages_are_durable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            ledger = OperationLedger(Path(directory) / "vyt.sqlite")
+            key = ledger.operation_key("job", "scene", "video", "snapgen", "prompt")
+            ledger.prepare(key, "job", "scene", "snapgen", "video", ledger.prompt_hash("prompt"))
+            ledger.mark_submitted(key, "remote-1")
+            ledger.mark_polling(key)
+            self.assertEqual(ledger.operation_status(key), "polling")
+            ledger.mark_download_pending(key)
+            self.assertEqual(ledger.operation_status(key), "download_pending")
+            ledger.close()
+
 
 if __name__ == "__main__":
     unittest.main()

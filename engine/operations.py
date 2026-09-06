@@ -153,6 +153,27 @@ class OperationLedger:
                 (str(remote_job_id), operation_key),
             )
 
+    def _mark_stage(self, operation_key, status):
+        with self.lock, self.connection:
+            self.connection.execute(
+                "UPDATE provider_operations SET status=?, updated_at=CURRENT_TIMESTAMP WHERE operation_key=?",
+                (str(status), operation_key),
+            )
+
+    def mark_polling(self, operation_key):
+        self._mark_stage(operation_key, "polling")
+
+    def mark_download_pending(self, operation_key):
+        self._mark_stage(operation_key, "download_pending")
+
+    def operation_status(self, operation_key):
+        with self.lock:
+            row = self.connection.execute(
+                "SELECT status FROM provider_operations WHERE operation_key=?",
+                (operation_key,),
+            ).fetchone()
+        return str(row[0]) if row else ""
+
     def mark_completed(self, operation_key, remote_job_id=None):
         with self.lock, self.connection:
             self.connection.execute(
