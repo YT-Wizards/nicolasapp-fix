@@ -5,6 +5,7 @@ const path = require('path');
 const crypto = require('crypto');
 const channels = require('./channels');
 const { isFullVideoDurationAllowed } = require('./duration');
+const { JobStore } = require('./job-store');
 
 const MAX_RUNNING = 2;
 const FULL_MAX_COST_USD = 7.0;
@@ -13,6 +14,8 @@ const state = { jobs: [], history: [] };
 const processes = new Map();
 let mainWindow = null;
 let lastConnectionCheck = null;
+let jobStore = null;
+let appIsQuitting = false;
 
 const rootDir = () => {
   if (!app.isPackaged) return path.resolve(__dirname, '..');
@@ -37,14 +40,20 @@ function writeJson(file, value) {
 }
 
 function loadPersistentState() {
+  jobStore = new JobStore(userFile('vyt.sqlite'));
+  jobStore.recoverInterruptedJobs();
+  state.jobs = jobStore.loadJobs();
   const saved = readJson(userFile('history.json'), { history: [] });
   state.history = Array.isArray(saved.history) ? saved.history.slice(0, 50) : [];
   const cardsDir = userFile('product-cards');
-  const staleBefore = Date.now() - 2 * 24 * 60 * 60 * 1000;
+  const referencedCards = new Set(
+    state.jobs.map((job) => job.productSale?.cardPath).filter(Boolean),
+  );
+  const staleBefore = Date.now() - 30 * 24 * 60 * 60 * 1000;
   try {
     for (const name of fs.readdirSync(cardsDir)) {
       const candidate = path.join(cardsDir, name);
-      if (fs.statSync(candidate).mtimeMs < staleBefore) fs.unlinkSync(candidate);
+      if (!referencedCards.has(candidate) && fs.statSync(candidate).mtimeMs < staleBefore) fs.unlinkSync(candidate);
     }
   } catch { /* No temporary product cards yet. */ }
 }
@@ -204,6 +213,7 @@ function updateJob(jobId, patch) {
   if (!job) return;
   const cleanPatch = Object.fromEntries(Object.entries(patch).filter(([, value]) => value !== undefined));
   Object.assign(job, cleanPatch, { updatedAt: nowIso() });
+  if (jobStore) jobStore.upsertJob(job);
   broadcast();
 }
 
@@ -266,7 +276,7 @@ function runNextJobs() {
 function startJob(job) {
   const secrets = getSecrets();
   const engine = path.join(rootDir(), 'engine', 'vyt.py');
-  const outputPath = chooseOutputPath(job.title, job.source);
+  const outputPath = job.outputPath || chooseOutputPath(job.title, job.source);
   const args = [engine, '--job', JSON.stringify({
     id: job.id,
     title: job.title,
@@ -316,10 +326,9 @@ function startJob(job) {
   child.on('error', (error) => { spawnError = error; });
   child.on('close', (code) => {
     processes.delete(job.id);
-    if (job.status === 'cancelled') {
-      removeProductCard(job);
-      state.jobs = state.jobs.filter((item) => item.id !== job.id);
-      broadcast();
+    if (job.status === 'cancelled' || (appIsQuitting && job.status === 'paused')) {
+      if (jobStore) jobStore.upsertJob(job);
+      if (!appIsQuitting) broadcast();
       runNextJobs();
       return;
     }
@@ -340,8 +349,9 @@ function startJob(job) {
 }
 
 async function createJob(payload) {
-  const duplicate = state.jobs.find((job) =>
-    ['queued', 'running'].includes(job.status) && samePath(job.source, payload.source)
+  const sourceIdentity = path.resolve(String(payload.source || '')).toLocaleLowerCase();
+  const duplicate = jobStore?.findActiveBySource(sourceIdentity) || state.jobs.find((job) =>
+    !['completed', 'failed', 'cancelled'].includes(job.status) && samePath(job.source, payload.source)
   );
   if (duplicate) throw new Error('Ese mismo vídeo ya está en producción. Espera a que termine o cancélalo antes de volver a añadirlo.');
   const settings = settingsStatus();
@@ -392,6 +402,7 @@ async function createJob(payload) {
     id: jobId,
     title: sanitizeTitle(payload.title),
     source: payload.source,
+    sourceIdentity,
     duration: effectiveDuration,
     branding: Boolean(payload.branding),
     productSale,
@@ -409,6 +420,7 @@ async function createJob(payload) {
     updatedAt: nowIso()
   };
   state.jobs.unshift(job);
+  jobStore.upsertJob(job);
   broadcast();
   runNextJobs();
   return { ok: true, id: job.id };
@@ -571,10 +583,21 @@ app.whenReady().then(async () => {
     return;
   }
   createWindow();
+  runNextJobs();
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 app.on('before-quit', () => {
+  appIsQuitting = true;
+  for (const job of state.jobs) {
+    if (processes.has(job.id) && job.status === 'running') {
+      updateJob(job.id, {
+        status: 'paused',
+        phase: 'Пауза',
+        detail: 'Приложение закрывается; задание будет продолжено после запуска.'
+      });
+    }
+  }
   for (const child of processes.values()) {
     if (!child.killed) child.kill('SIGTERM');
   }
@@ -633,7 +656,7 @@ ipcMain.handle('cancel-job', (_event, jobId) => {
     forceStop.unref();
   }
   const job = state.jobs.find((item) => item.id === jobId);
-  if (!child) removeProductCard(job);
+  if (!job) return { ok: false };
   updateJob(jobId, { status: 'cancelled', phase: 'Cancelado', detail: 'El progreso válido queda guardado para poder reanudar.' });
   return { ok: true };
 });
