@@ -1,4 +1,5 @@
 import os
+import time
 import sys
 import tempfile
 import unittest
@@ -152,6 +153,20 @@ class ReviewRecoveryTests(unittest.TestCase):
         with self.assertRaises(QualityReviewPendingError):
             pipeline.cached_asset_for(scene)
         self.assertTrue(output.exists())
+
+    @patch("vyt.probe", return_value={"duration": 8, "width": 1920, "height": 1080})
+    def test_same_asset_with_new_mtime_reuses_review(self, _probe):
+        pipeline = self.pipeline()
+        scene = {"id": "b012", "type": "image", "narration": "one phone"}
+        output = pipeline.assets / "b012.png"
+        output.write_bytes(b"same-asset" * 300)
+        pipeline.record_asset_review(scene, output, "passed")
+        pipeline.mark_asset_completed(scene, output)
+        time.sleep(0.01)
+        os.utime(output, None)
+        pipeline.reviewer.chat_json = Mock(side_effect=ProviderError("review must be cached"))
+        self.assertEqual(pipeline.cached_asset_for(scene), output)
+        pipeline.reviewer.chat_json.assert_not_called()
 
     @patch("vyt.probe", return_value={"duration": 8, "width": 1920, "height": 1080})
     def test_pending_local_media_survives_budget_rebalance(self, _probe):

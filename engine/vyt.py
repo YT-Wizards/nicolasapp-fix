@@ -365,6 +365,19 @@ class Pipeline:
                 f"({', '.join(sorted(set(pending))[:5])}). Vuelve a ejecutar el mismo vídeo para recuperarlos."
             )
 
+    @staticmethod
+    def asset_fingerprint(path):
+        path = Path(path)
+        digest = hashlib.sha256()
+        with path.open("rb") as source:
+            for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return {
+            "file": path.name,
+            "size": path.stat().st_size,
+            "sha256": digest.hexdigest(),
+        }
+
     def cached_asset_for(self, scene):
         with self.checkpoint_lock:
             completed = self.checkpoint.get("completed_assets")
@@ -406,8 +419,14 @@ class Pipeline:
             # Legacy completed records remain reusable. New/unindexed resources
             # must have an approval bound to the exact downloaded file.
             legacy_approved = indexed and receipt is None
-            stamp = {"file": path.name, "size": path.stat().st_size, "mtime_ns": path.stat().st_mtime_ns}
-            approved = isinstance(receipt, dict) and receipt.get("status") == "passed" and all(receipt.get(k) == v for k, v in stamp.items())
+            stamp = self.asset_fingerprint(path)
+            approved = (
+                isinstance(receipt, dict)
+                and receipt.get("status") == "passed"
+                and receipt.get("file") == stamp["file"]
+                and receipt.get("size") == stamp["size"]
+                and receipt.get("sha256") == stamp["sha256"]
+            )
             if not legacy_approved and not approved:
                 try:
                     self.review_asset(scene, path)
@@ -430,8 +449,8 @@ class Pipeline:
             with self.checkpoint_lock:
                 records = self.checkpoint.setdefault("asset_reviews", {})
                 records[scene["id"]] = {
-                    "file": path.name, "size": path.stat().st_size,
-                    "mtime_ns": path.stat().st_mtime_ns, "status": status,
+                    **self.asset_fingerprint(path),
+                    "status": status,
                 }
                 if warnings:
                     records[scene["id"]]["warnings"] = list(warnings)
