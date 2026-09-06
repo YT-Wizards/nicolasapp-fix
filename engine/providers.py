@@ -35,6 +35,68 @@ class ProviderHTTPError(ProviderError):
         self.retry_after = retry_after
 
 
+class CircuitOpenError(ProviderError):
+    """The provider is temporarily paused after repeated transient failures."""
+
+
+class ProviderCircuitBreaker:
+    """Small thread-safe breaker shared by paid provider adapters."""
+
+    def __init__(self, failure_threshold=3, cooldown=60.0, clock=None):
+        self.failure_threshold = max(1, int(failure_threshold))
+        self.cooldown = max(0.0, float(cooldown))
+        self.clock = clock or time.monotonic
+        self._lock = threading.Lock()
+        self._failures = 0
+        self._open_until = 0.0
+        self._probe_in_flight = False
+
+    def before_request(self):
+        with self._lock:
+            now = float(self.clock())
+            if now < self._open_until:
+                raise CircuitOpenError(
+                    "El proveedor está temporalmente pausado tras varios fallos; "
+                    f"se reintentará en {max(1, int(self._open_until - now))} s."
+                )
+            if self._open_until and not self._probe_in_flight:
+                self._probe_in_flight = True
+            elif self._open_until and self._probe_in_flight:
+                raise CircuitOpenError("El proveedor está probándose; se mantiene la cola en espera.")
+
+    def record_success(self):
+        with self._lock:
+            self._failures = 0
+            self._open_until = 0.0
+            self._probe_in_flight = False
+
+    def record_failure(self):
+        with self._lock:
+            self._failures += 1
+            self._probe_in_flight = False
+            if self._failures >= self.failure_threshold:
+                self._open_until = float(self.clock()) + self.cooldown
+
+
+_PROVIDER_CIRCUITS = {}
+_PROVIDER_CIRCUITS_LOCK = threading.Lock()
+
+
+def provider_circuit(name):
+    with _PROVIDER_CIRCUITS_LOCK:
+        return _PROVIDER_CIRCUITS.setdefault(str(name), ProviderCircuitBreaker())
+
+
+def _is_transient_provider_error(error):
+    if isinstance(error, ProviderHTTPError):
+        return error.status in {408, 425, 429, 500, 502, 503, 504}
+    message = str(error or "").lower()
+    return any(token in message for token in (
+        "timed out", "timeout", "connection reset", "remote end closed",
+        "temporary", "temporarily", "name or service not known",
+    ))
+
+
 class RegeneratableError(ProviderError):
     """The provider explicitly failed, or a completed asset failed visual QA."""
     pass
@@ -428,12 +490,13 @@ class VercelGatewayClient:
 class AlgrowClient:
     CREDIT_USD = 9.99 / 250.0
 
-    def __init__(self, api_key):
+    def __init__(self, api_key, circuit_breaker=None):
         if not api_key:
             raise ProviderError("Falta la API key de Algrow.")
         self.api_key = api_key
         self.spent_usd = 0.0
         self._spend_lock = threading.Lock()
+        self.circuit_breaker = circuit_breaker or provider_circuit("algrow")
 
     @property
     def headers(self):
@@ -445,13 +508,21 @@ class AlgrowClient:
         job_id = str(resume_job_id or "").strip()
         if not job_id:
             payload = {"prompt": prompt, "model": "gpt-image-2", "aspect_ratio": "16:9", "fast": False}
-            created = _json_request(
-                "https://api.algrow.online/api/generate-image",
-                method="POST",
-                headers=self.headers,
-                payload=payload,
-                timeout=_remaining_timeout(deadline, 90),
-            )
+            self.circuit_breaker.before_request()
+            try:
+                created = _json_request(
+                    "https://api.algrow.online/api/generate-image",
+                    method="POST",
+                    headers=self.headers,
+                    payload=payload,
+                    timeout=_remaining_timeout(deadline, 90),
+                )
+            except Exception as error:
+                if _is_transient_provider_error(error):
+                    self.circuit_breaker.record_failure()
+                raise
+            else:
+                self.circuit_breaker.record_success()
             job_id = str(created.get("job_id") or "").strip()
             if not job_id:
                 raise ProviderError(f"Algrow no devolvió job_id: {str(created)[:600]}")
@@ -537,12 +608,13 @@ class AlgrowClient:
 class GeminiGenClient:
     ESTIMATED_CLIP_USD = 0.02
 
-    def __init__(self, api_key):
+    def __init__(self, api_key, circuit_breaker=None):
         if not api_key:
             raise ProviderError("Falta la API key de GeminiGen.")
         self.api_key = api_key
         self.spent_usd = 0.0
         self._spend_lock = threading.Lock()
+        self.circuit_breaker = circuit_breaker or provider_circuit("snapgen")
 
     def ensure_available(self, minimum_success_rate=80.0):
         """Fail for free before any paid work when SnapGen reports Veo trouble."""
@@ -617,6 +689,7 @@ class GeminiGenClient:
             multipart.append(("mode_image", (None, "ingredient")))
         conversion_uuid = str(resume_uuid or "").strip()
         if not conversion_uuid:
+            self.circuit_breaker.before_request()
             try:
                 response = requests.post(
                     "https://api.snapgen.ai/uapi/v1/video-gen/veo",
@@ -625,12 +698,26 @@ class GeminiGenClient:
                     timeout=_remaining_timeout(deadline, 120),
                 )
                 if not response.ok:
-                    raise ProviderError(f"HTTP {response.status_code}: {response.text[:800]}")
+                    retry_after = None
+                    try:
+                        retry_after = float(response.headers.get("Retry-After"))
+                    except (AttributeError, TypeError, ValueError):
+                        pass
+                    raise ProviderHTTPError(
+                        response.status_code, response.text[:800], retry_after=retry_after,
+                    )
                 created = response.json()
             except requests.RequestException as error:
+                self.circuit_breaker.record_failure()
                 raise ProviderError(str(error)) from error
+            except ProviderHTTPError as error:
+                if _is_transient_provider_error(error):
+                    self.circuit_breaker.record_failure()
+                raise
             except ValueError as error:
                 raise ProviderError("SnapGen devolvió una respuesta que no era JSON.") from error
+            else:
+                self.circuit_breaker.record_success()
             payload = created.get("data") if isinstance(created.get("data"), dict) else created
             conversion_uuid = str(payload.get("uuid") or "").strip()
             if not conversion_uuid:

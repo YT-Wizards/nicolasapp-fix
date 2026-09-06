@@ -7,10 +7,44 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "engine"))
 
-from providers import AlgrowClient, GeminiGenClient, ProviderError, ProviderHTTPError, VercelGatewayClient, _extract_json, download, requests
+from providers import (
+    AlgrowClient,
+    CircuitOpenError,
+    GeminiGenClient,
+    ProviderCircuitBreaker,
+    ProviderError,
+    ProviderHTTPError,
+    VercelGatewayClient,
+    _extract_json,
+    download,
+    requests,
+)
 
 
 class ProviderParsingTests(unittest.TestCase):
+    def test_circuit_breaker_opens_then_allows_one_probe_after_cooldown(self):
+        now = [100.0]
+        breaker = ProviderCircuitBreaker(failure_threshold=2, cooldown=30, clock=lambda: now[0])
+        breaker.record_failure()
+        breaker.record_failure()
+        with self.assertRaises(CircuitOpenError):
+            breaker.before_request()
+        now[0] = 131.0
+        breaker.before_request()
+        with self.assertRaises(CircuitOpenError):
+            breaker.before_request()
+        breaker.record_success()
+        breaker.before_request()
+
+    @patch("providers.requests.post")
+    def test_open_circuit_blocks_new_paid_veo_request(self, post):
+        breaker = ProviderCircuitBreaker(failure_threshold=1, cooldown=60, clock=lambda: 100.0)
+        breaker.record_failure()
+        client = GeminiGenClient("key", circuit_breaker=breaker)
+        with self.assertRaises(CircuitOpenError):
+            client.generate_video("prompt", Path("/tmp/blocked-vyt.mp4"))
+        post.assert_not_called()
+
     @patch("providers.urllib.request.urlopen")
     def test_download_resumes_partial_file_with_range(self, urlopen):
         class Response:
