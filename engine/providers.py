@@ -35,12 +35,23 @@ class ProviderHTTPError(ProviderError):
         self.retry_after = retry_after
 
 
-class CircuitOpenError(ProviderError):
+class ProviderTemporarilyUnavailableError(ProviderError):
+    """A provider request should be retried later without buying a replacement."""
+
+    def __init__(self, message, retry_after=30.0):
+        super().__init__(message)
+        self.retry_after = max(1.0, float(retry_after or 30.0))
+
+
+class CircuitOpenError(ProviderTemporarilyUnavailableError):
     """The provider is temporarily paused after repeated transient failures."""
 
 
-class ProviderRateLimitError(ProviderError):
+class ProviderRateLimitError(ProviderTemporarilyUnavailableError):
     """A paid POST could not acquire the provider-wide concurrency slot."""
+
+    def __init__(self, message, retry_after=15.0):
+        super().__init__(message, retry_after=retry_after)
 
 
 class ProviderRequestGate:
@@ -80,12 +91,16 @@ class ProviderCircuitBreaker:
             if now < self._open_until:
                 raise CircuitOpenError(
                     "El proveedor está temporalmente pausado tras varios fallos; "
-                    f"se reintentará en {max(1, int(self._open_until - now))} s."
+                    f"se reintentará en {max(1, int(self._open_until - now))} s.",
+                    retry_after=self._open_until - now,
                 )
             if self._open_until and not self._probe_in_flight:
                 self._probe_in_flight = True
             elif self._open_until and self._probe_in_flight:
-                raise CircuitOpenError("El proveedor está probándose; se mantiene la cola en espera.")
+                raise CircuitOpenError(
+                    "El proveedor está probándose; se mantiene la cola en espera.",
+                    retry_after=15,
+                )
 
     def record_success(self):
         with self._lock:

@@ -27,7 +27,8 @@ from planning import (
 from prompts import IMAGE_REVIEW_PROMPT, PLANNER_SYSTEM, VIDEO_REVIEW_PROMPT, image_prompt, video_prompt
 from providers import (
     AlgrowClient, GeminiGenClient, VercelGatewayClient,
-    PaidAssetRecoveryError, ProviderError, RegeneratableError,
+    PaidAssetRecoveryError, ProviderError, ProviderTemporarilyUnavailableError,
+    RegeneratableError,
 )
 from operations import OperationLedger, OperationRecoveryRequired
 
@@ -659,6 +660,12 @@ class Pipeline:
                         self.save_pending_image_job(scene, job_id),
                     ),
                 )
+            except ProviderTemporarilyUnavailableError as error:
+                # No paid POST was accepted. Clear the prepared ledger row so
+                # the next retry may safely submit the same idempotent operation.
+                if not resume_job_id:
+                    self.operation_ledger.mark_failed(operation_key, str(error))
+                raise
             except RegeneratableError:
                 # Algrow explicitly marked this job terminal. Only now is it safe
                 # for the normal one-retry path to purchase a replacement image.
@@ -712,6 +719,10 @@ class Pipeline:
                         if scene.get("presenter_broll") and self.presenter_reference else None
                     ),
                 )
+            except ProviderTemporarilyUnavailableError as error:
+                if not resume_uuid:
+                    self.operation_ledger.mark_failed(operation_key, str(error))
+                raise
             except RegeneratableError:
                 # Google explicitly failed this UUID; only this case permits the
                 # quality retry to purchase a fresh generation.
@@ -788,6 +799,8 @@ class Pipeline:
             # Budget is not a provider/quality failure. Never buy a retry or a
             # fallback after this point; the caller applies the reviewed plan's
             # evenly distributed free fallback.
+            raise
+        except ProviderTemporarilyUnavailableError:
             raise
         except PaidAssetRecoveryError:
             # The remote UUID/job_id is already paid. Never mutate this scene,
@@ -1039,6 +1052,9 @@ class Pipeline:
                 except PaidAssetRecoveryError as error:
                     self.record_failure(scene, "paid_asset_recovery", error)
                     raise
+                except ProviderTemporarilyUnavailableError as error:
+                    self.record_failure(scene, "provider_temporarily_unavailable", error)
+                    raise
                 except Exception as error:
                     # A provider-declared terminal failure or a completed asset
                     # rejected by QA has no recoverable remote purchase left.
@@ -1080,6 +1096,9 @@ class Pipeline:
                 first_asset = self.generate_one(candidate)
             except PaidAssetRecoveryError as error:
                 self.record_failure(candidate, "paid_asset_recovery", error)
+                raise
+            except ProviderTemporarilyUnavailableError as error:
+                self.record_failure(candidate, "provider_temporarily_unavailable", error)
                 raise
             except BudgetExhaustedError as error:
                 self.record_failure(candidate, "budget", error)
@@ -1147,6 +1166,9 @@ class Pipeline:
                         asset = future.result()
                     except PaidAssetRecoveryError as error:
                         self.record_failure(scene, "paid_asset_recovery", error)
+                        raise
+                    except ProviderTemporarilyUnavailableError as error:
+                        self.record_failure(scene, "provider_temporarily_unavailable", error)
                         raise
                     except BudgetExhaustedError as error:
                         asset = None
@@ -1277,6 +1299,14 @@ def main():
     except InterruptedError as error:
         result = {
             "ok": False, "error": str(error),
+            "cost_usd": round(pipeline.total_spent if pipeline else 0, 4),
+            "cost_breakdown": pipeline.cost_breakdown() if pipeline else {},
+            "failures": pipeline.failures[-8:] if pipeline else [],
+        }
+    except ProviderTemporarilyUnavailableError as error:
+        result = {
+            "ok": False, "retryable": True, "error": str(error),
+            "retry_after_seconds": getattr(error, "retry_after", 30),
             "cost_usd": round(pipeline.total_spent if pipeline else 0, 4),
             "cost_breakdown": pipeline.cost_breakdown() if pipeline else {},
             "failures": pipeline.failures[-8:] if pipeline else [],

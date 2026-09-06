@@ -13,6 +13,7 @@ const FULL_MAX_COST_USD = 7.0;
 const TEST_MAX_COST_USD = 1.5;
 const state = { jobs: [], history: [] };
 const processes = new Map();
+const retryTimers = new Map();
 let mainWindow = null;
 let lastConnectionCheck = null;
 let jobStore = null;
@@ -236,6 +237,31 @@ function parseEngineLine(jobId, line) {
 }
 
 function completeJob(job, result) {
+  if (result.retryable) {
+    const retryAfterSeconds = Math.max(5, Math.min(30 * 60, Number(result.retry_after_seconds || 30)));
+    updateJob(job.id, {
+      status: 'waiting_for_provider',
+      phase: 'Esperando provider',
+      detail: result.error || `Reintento automático en ${Math.ceil(retryAfterSeconds)} s.`,
+      retryAt: new Date(Date.now() + retryAfterSeconds * 1000).toISOString(),
+      error: result.error || ''
+    });
+    const timer = setTimeout(() => {
+      retryTimers.delete(job.id);
+      const current = state.jobs.find((item) => item.id === job.id);
+      if (appIsQuitting || !current || current.status !== 'waiting_for_provider') return;
+      updateJob(job.id, {
+        status: 'queued',
+        phase: 'En cola',
+        detail: 'El provider volvió a estar disponible; reanudando sin nuevas compras.',
+        retryAt: null,
+      });
+      runNextJobs();
+    }, retryAfterSeconds * 1000);
+    timer.unref?.();
+    retryTimers.set(job.id, timer);
+    return;
+  }
   const historyItem = {
     id: job.id,
     title: job.title,
@@ -589,6 +615,8 @@ app.whenReady().then(async () => {
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 app.on('before-quit', () => {
   appIsQuitting = true;
+  for (const timer of retryTimers.values()) clearTimeout(timer);
+  retryTimers.clear();
   for (const job of state.jobs) {
     if (processes.has(job.id) && job.status === 'running') {
       updateJob(job.id, {

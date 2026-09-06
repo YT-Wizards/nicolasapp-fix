@@ -20,15 +20,23 @@ test('persists jobs and recovers interrupted work as queued', () => {
     updatedAt: new Date().toISOString(),
   };
   store.upsertJob(job);
+  store.upsertJob({
+    ...job,
+    id: 'job-waiting',
+    source: '/tmp/waiting.mp4',
+    sourceIdentity: '/tmp/waiting.mp4',
+    status: 'waiting_for_provider',
+    createdAt: new Date(Date.now() + 1).toISOString(),
+  });
   assert.equal(store.findActiveBySource(job.sourceIdentity).id, job.id);
   store.close();
 
   const reopened = new JobStore(database);
   reopened.recoverInterruptedJobs();
   const recovered = reopened.loadJobs();
-  assert.equal(recovered.length, 1);
-  assert.equal(recovered[0].status, 'queued');
-  assert.equal(recovered[0].phase, 'Возобновление после перезапуска');
+  assert.equal(recovered.length, 2);
+  assert.ok(recovered.every((item) => item.status === 'queued'));
+  assert.ok(recovered.every((item) => item.phase === 'Возобновление после перезапуска'));
   reopened.close();
   fs.rmSync(directory, { recursive: true, force: true });
 });

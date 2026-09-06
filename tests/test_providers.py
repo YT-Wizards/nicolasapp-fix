@@ -12,6 +12,7 @@ from providers import (
     CircuitOpenError,
     GeminiGenClient,
     ProviderRateLimitError,
+    ProviderTemporarilyUnavailableError,
     ProviderCircuitBreaker,
     ProviderRequestGate,
     ProviderError,
@@ -46,6 +47,11 @@ class ProviderParsingTests(unittest.TestCase):
             breaker.before_request()
         breaker.record_success()
         breaker.before_request()
+
+    def test_temporary_provider_errors_expose_retry_delay(self):
+        error = ProviderRateLimitError("busy", retry_after=12)
+        self.assertIsInstance(error, ProviderTemporarilyUnavailableError)
+        self.assertEqual(error.retry_after, 12.0)
 
     @patch("providers.requests.post")
     def test_open_circuit_blocks_new_paid_veo_request(self, post):
