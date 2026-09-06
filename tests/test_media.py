@@ -21,9 +21,25 @@ from media import (
     run,
     set_job_deadline,
 )
+from media import _merge_transcription_segments
 
 
 class ImageMotionTests(unittest.TestCase):
+    def test_transcription_merge_removes_overlap_duplicates_and_clamps_time(self):
+        merged = _merge_transcription_segments([
+            {"start": -0.5, "end": 2.0, "text": "The same sentence"},
+            {"start": 1.2, "end": 2.6, "text": "The same sentence"},
+            {"start": 2.4, "end": 4.0, "text": "A new factual detail"},
+        ], 3.0)
+        self.assertEqual(len(merged), 2)
+        self.assertEqual(merged[0]["start"], 0.0)
+        self.assertEqual(merged[-1]["end"], 3.0)
+        self.assertLessEqual(merged[0]["end"], merged[1]["start"])
+
+    def test_transcription_merge_rejects_empty_output(self):
+        with self.assertRaisesRegex(RuntimeError, "narración"):
+            _merge_transcription_segments([], 10.0)
+
     def test_legacy_job_deadline_does_not_shorten_an_explicit_operation_timeout(self):
         try:
             with patch("media.time.monotonic", return_value=500.0), patch("media.subprocess.run") as process:

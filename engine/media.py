@@ -1,10 +1,12 @@
 import json
+import hashlib
 import os
 import re
 import shutil
 import subprocess
 import time
 import unicodedata
+from difflib import SequenceMatcher
 from pathlib import Path
 
 
@@ -30,6 +32,8 @@ FFPROBE = find_binary(FFPROBE_CANDIDATES)
 # binary installed, while production still gets the same actionable error.
 WHISPER = None
 DEFAULT_LOCAL_PROCESS_TIMEOUT = 120.0
+TRANSCRIPTION_CHUNK_SECONDS = 10 * 60
+TRANSCRIPTION_OVERLAP_SECONDS = 1.0
 
 
 def set_job_deadline(deadline):
@@ -73,31 +77,118 @@ def probe(path):
     return {"duration": duration, "width": int(video.get("width") or 0), "height": int(video.get("height") or 0)}
 
 
-def transcribe(source, duration, workspace, model_path):
-    whisper = find_binary(WHISPER_CANDIDATES)
-    workspace = Path(workspace)
-    wav = workspace / "speech.wav"
-    output = workspace / "transcript"
-    run([FFMPEG, "-hide_banner", "-loglevel", "error", "-y", "-t", f"{duration:.3f}", "-i", str(source), "-vn", "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", str(wav)], timeout=600)
-    command = [whisper, "-m", str(model_path), "-f", str(wav), "-l", "auto", "-oj", "-of", str(output), "-ng", "-t", "8", "-np"]
-    try:
-        run(command, timeout=max(600, int(duration * 2)))
-    except RuntimeError:
-        # English-only models do not accept auto; retry in English for the bundled fallback.
-        command[command.index("auto")] = "en"
-        run(command, timeout=max(600, int(duration * 2)))
-    data = json.loads((workspace / "transcript.json").read_text())
+def _transcription_cache_key(source, duration, model_path, start, end):
+    source = Path(source)
+    stat = source.stat()
+    payload = {
+        "source": str(source.resolve()),
+        "size": stat.st_size,
+        "mtime_ns": stat.st_mtime_ns,
+        "duration": round(float(duration), 3),
+        "model": str(Path(model_path).resolve()),
+        "start": round(float(start), 3),
+        "end": round(float(end), 3),
+    }
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
+
+
+def _parse_whisper_segments(data, offset=0.0):
     segments = []
     for item in data.get("transcription", []):
         offsets = item.get("offsets") or {}
-        segments.append({
-            "start": float(offsets.get("from", 0)) / 1000.0,
-            "end": float(offsets.get("to", 0)) / 1000.0,
-            "text": str(item.get("text") or "").strip(),
-        })
-    if not segments:
-        raise RuntimeError("No se ha podido extraer la narración del vídeo.")
+        start = float(offset) + float(offsets.get("from", 0)) / 1000.0
+        end = float(offset) + float(offsets.get("to", 0)) / 1000.0
+        text = str(item.get("text") or "").strip()
+        if text and end >= start:
+            segments.append({"start": start, "end": end, "text": text})
     return segments
+
+
+def _merge_transcription_segments(segments, duration):
+    ordered = sorted(segments, key=lambda item: (float(item["start"]), float(item["end"])))
+    merged = []
+    for item in ordered:
+        start = max(0.0, min(float(duration), float(item["start"])))
+        end = max(start, min(float(duration), float(item["end"])))
+        text = " ".join(str(item.get("text") or "").split()).strip()
+        if not text or end <= start:
+            continue
+        current = {"start": round(start, 3), "end": round(end, 3), "text": text}
+        if merged:
+            previous = merged[-1]
+            overlap = min(previous["end"], current["end"]) - max(previous["start"], current["start"])
+            similarity = SequenceMatcher(None, previous["text"].lower(), text.lower()).ratio()
+            if overlap > 0 or (current["start"] - previous["end"] < TRANSCRIPTION_OVERLAP_SECONDS and similarity >= 0.72):
+                if similarity >= 0.72:
+                    if len(text) > len(previous["text"]):
+                        merged[-1] = current
+                    continue
+                current["start"] = max(current["start"], previous["end"])
+                if current["end"] <= current["start"]:
+                    continue
+        merged.append(current)
+    if not merged:
+        raise RuntimeError("No se ha podido extraer la narración del vídeo.")
+    for previous, current in zip(merged, merged[1:]):
+        if current["start"] < previous["end"]:
+            current["start"] = previous["end"]
+    return merged
+
+
+def _run_whisper(whisper, wav, output_prefix, model_path, timeout):
+    command = [whisper, "-m", str(model_path), "-f", str(wav), "-l", "auto", "-oj", "-of", str(output_prefix), "-ng", "-t", "8", "-np"]
+    try:
+        run(command, timeout=timeout)
+    except RuntimeError:
+        # English-only models do not accept auto; retry only this chunk.
+        command[command.index("auto")] = "en"
+        run(command, timeout=timeout)
+    output_path = Path(f"{output_prefix}.json")
+    return json.loads(output_path.read_text())
+
+
+def transcribe(source, duration, workspace, model_path):
+    whisper = find_binary(WHISPER_CANDIDATES)
+    workspace = Path(workspace)
+    cache = workspace / "transcription-chunks"
+    cache.mkdir(parents=True, exist_ok=True)
+    chunk_length = max(1.0, float(TRANSCRIPTION_CHUNK_SECONDS))
+    overlap = min(TRANSCRIPTION_OVERLAP_SECONDS, chunk_length / 4)
+    chunks = []
+    start = 0.0
+    index = 0
+    while start < float(duration) - 0.01:
+        end = min(float(duration), start + chunk_length)
+        chunks.append((index, start, end))
+        if end >= float(duration):
+            break
+        start = end - overlap
+        index += 1
+
+    all_segments = []
+    source = Path(source)
+    for index, start, end in chunks:
+        key = _transcription_cache_key(source, duration, model_path, start, end)
+        cached = cache / f"{key}.json"
+        if cached.exists():
+            data = json.loads(cached.read_text())
+        else:
+            wav = cache / f"{key}.wav"
+            output_prefix = cache / f"{key}.transcript"
+            run([
+                FFMPEG, "-hide_banner", "-loglevel", "error", "-y",
+                "-ss", f"{start:.3f}", "-t", f"{end - start:.3f}", "-i", str(source),
+                "-vn", "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", str(wav),
+            ], timeout=max(600, int((end - start) * 2)))
+            data = _run_whisper(
+                whisper, wav, output_prefix, model_path,
+                timeout=max(600, int((end - start) * 2)),
+            )
+            cached.write_text(json.dumps(data, ensure_ascii=False))
+            wav.unlink(missing_ok=True)
+            Path(f"{output_prefix}.json").unlink(missing_ok=True)
+        all_segments.extend(_parse_whisper_segments(data, offset=start))
+    return _merge_transcription_segments(all_segments, float(duration))
 
 
 def extract_review_strip(video_path, output_path, visible_duration=None):
