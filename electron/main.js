@@ -66,7 +66,8 @@ function publicState() {
   return {
     jobs: state.jobs.map(({ secretConfig, productSale, ...job }) => ({
       ...job,
-      productSale: { enabled: Boolean(productSale?.enabled) }
+      productSale: { enabled: Boolean(productSale?.enabled) },
+      costLedger: jobStore?.costTotals(job.id) || {},
     })),
     history: state.history
   };

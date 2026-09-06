@@ -125,7 +125,7 @@ async function submit(testMode) {
 }
 
 function renderJobs() {
-  const active = appState.jobs.filter((j) => ['queued', 'running'].includes(j.status));
+  const active = appState.jobs.filter((j) => !['completed', 'failed', 'cancelled'].includes(j.status));
   $('#capacityLabel').textContent = `${active.filter((j) => j.status === 'running').length} de 2 activas`;
   $('#jobsEmpty').style.display = active.length ? 'none' : 'flex';
   $('#jobsList').innerHTML = active.map((job) => `
@@ -134,9 +134,20 @@ function renderJobs() {
       <div class="progress-track"><i style="width:${Math.max(0, Math.min(100, job.progress || 0))}%"></i></div>
       <div class="job-detail"><span>${escapeHtml(job.phase || 'En cola')}</span><span>${job.status === 'queued' ? 'esperando turno' : formatEta(job.etaSeconds)}</span></div>
       <div class="job-cost"><span>${escapeHtml(job.detail || (job.testMode ? 'Prueba de 90 s' : 'Vídeo completo'))}</span><b>${Number(job.spentUsd || 0).toFixed(2)} $ / ${Number(job.maxCostUsd || (job.testMode ? 1.5 : 7)).toFixed(2)} $</b></div>
+      <div class="job-metrics"><span>${escapeHtml(statusLabel(job.status))}</span><span>${costMetric(job.costLedger, 'avoided_duplicate')} recuperados</span><span>${costMetric(job.costLedger, 'charged')} cobrados</span></div>
+      ${job.warning ? `<div class="job-warning">${escapeHtml(job.warning)}</div>` : ''}
       <div class="job-actions"><button data-cancel="${job.id}">Cancelar</button></div>
     </article>`).join('');
   $$('[data-cancel]').forEach((button) => button.onclick = () => window.vyt.cancelJob(button.dataset.cancel));
+}
+
+function statusLabel(status) {
+  return ({ queued: 'En cola', running: 'En producción', paused: 'En pausa', waiting_for_provider: 'Esperando provider', waiting_for_download: 'Esperando descarga', rendering: 'Montando', recoverable: 'Reanudable' })[status] || status || 'En cola';
+}
+
+function costMetric(ledger, kind) {
+  const value = Number(ledger?.[kind] || 0);
+  return `${value.toFixed(2)} $`;
 }
 
 function renderHistory() {

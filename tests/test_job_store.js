@@ -32,3 +32,15 @@ test('persists jobs and recovers interrupted work as queued', () => {
   reopened.close();
   fs.rmSync(directory, { recursive: true, force: true });
 });
+
+test('aggregates durable cost ledger by kind', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vyt-cost-store-'));
+  const store = new JobStore(path.join(directory, 'vyt.sqlite'));
+  store.db.prepare(`
+    INSERT INTO cost_events(job_id, provider, kind, amount_usd)
+    VALUES (?, ?, ?, ?), (?, ?, ?, ?), (?, ?, ?, ?)
+  `).run('job-2', 'algrow', 'charged', 0.4, 'job-2', 'algrow', 'charged', 0.6, 'job-2', 'algrow', 'avoided_duplicate', 0.8);
+  assert.deepEqual(store.costTotals('job-2'), { charged: 1, avoided_duplicate: 0.8 });
+  store.close();
+  fs.rmSync(directory, { recursive: true, force: true });
+});

@@ -34,6 +34,17 @@ class JobStore {
       );
       CREATE INDEX IF NOT EXISTS jobs_status_idx ON jobs(status);
       CREATE INDEX IF NOT EXISTS jobs_source_idx ON jobs(source_identity);
+      CREATE TABLE IF NOT EXISTS cost_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        job_id TEXT NOT NULL,
+        operation_key TEXT,
+        provider TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        amount_usd REAL NOT NULL,
+        metadata_json TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE INDEX IF NOT EXISTS cost_events_job_idx ON cost_events(job_id, kind);
     `);
     this.db.prepare(`
       INSERT OR IGNORE INTO schema_migrations(version, applied_at)
@@ -87,6 +98,16 @@ class JobStore {
     `).get(String(sourceIdentity || ''));
     if (!row) return null;
     try { return JSON.parse(row.payload_json); } catch { return null; }
+  }
+
+  costTotals(jobId) {
+    return this.db.prepare(`
+      SELECT kind, ROUND(SUM(amount_usd), 8) AS amount
+      FROM cost_events WHERE job_id=? GROUP BY kind
+    `).all(String(jobId || '')).reduce((totals, row) => {
+      totals[row.kind] = Number(row.amount || 0);
+      return totals;
+    }, {});
   }
 
   recoverInterruptedJobs() {
