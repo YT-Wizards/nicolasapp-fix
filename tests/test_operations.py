@@ -33,6 +33,18 @@ class OperationLedgerTests(unittest.TestCase):
             )
             ledger.close()
 
+    def test_cost_events_are_grouped_by_kind(self):
+        with tempfile.TemporaryDirectory() as directory:
+            ledger = OperationLedger(Path(directory) / "vyt.sqlite")
+            ledger.record_cost("job", "reserved", 0.20, provider="budget")
+            ledger.record_cost("job", "released", 0.20, provider="budget")
+            ledger.record_cost("job", "charged", 0.14, provider="algrow", operation_key="op")
+            ledger.record_cost("job", "avoided_duplicate", 0.14, provider="algrow", operation_key="op")
+            totals = ledger.cost_totals("job")
+            self.assertEqual(totals["charged"], 0.14)
+            self.assertEqual(totals["avoided_duplicate"], 0.14)
+            ledger.close()
+
 
 if __name__ == "__main__":
     unittest.main()

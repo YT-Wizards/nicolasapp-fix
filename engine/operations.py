@@ -45,6 +45,23 @@ class OperationLedger:
                 "CREATE INDEX IF NOT EXISTS provider_operations_job_idx "
                 "ON provider_operations(job_id, scene_id)"
             )
+            self.connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS cost_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    job_id TEXT NOT NULL,
+                    operation_key TEXT,
+                    provider TEXT NOT NULL,
+                    kind TEXT NOT NULL,
+                    amount_usd REAL NOT NULL,
+                    metadata_json TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            self.connection.execute(
+                "CREATE INDEX IF NOT EXISTS cost_events_job_idx ON cost_events(job_id, kind)"
+            )
 
     @staticmethod
     def prompt_hash(prompt):
@@ -138,6 +155,31 @@ class OperationLedger:
                 """,
                 (str(error)[:1000], operation_key),
             )
+
+    def record_cost(self, job_id, kind, amount_usd, provider="unknown", operation_key=None, metadata=None):
+        amount = max(0.0, float(amount_usd or 0.0))
+        if amount <= 0.0:
+            return
+        with self.lock, self.connection:
+            self.connection.execute(
+                """
+                INSERT INTO cost_events(
+                    job_id, operation_key, provider, kind, amount_usd, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (str(job_id), str(operation_key) if operation_key else None,
+                 str(provider), str(kind), amount,
+                 json.dumps(metadata or {}, ensure_ascii=False, sort_keys=True)),
+            )
+
+    def cost_totals(self, job_id):
+        with self.lock:
+            rows = self.connection.execute(
+                "SELECT kind, ROUND(SUM(amount_usd), 8) FROM cost_events "
+                "WHERE job_id=? GROUP BY kind",
+                (str(job_id),),
+            ).fetchall()
+        return {str(kind): float(amount or 0.0) for kind, amount in rows}
 
     def close(self):
         with self.lock:

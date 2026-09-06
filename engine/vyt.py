@@ -238,6 +238,7 @@ class Pipeline:
     def persist_ai_usage(self, _amount=0.0):
         # Persist every billed AI response immediately. A crash after a review
         # can no longer forget that charge and overspend on the next resume.
+        self.operation_ledger.record_cost(self.config["id"], "charged", _amount, provider="ai-gateway")
         if self.checkpoint_path:
             self.save_checkpoint()
 
@@ -246,10 +247,12 @@ class Pipeline:
             if self.total_spent + self.reserved_usd + amount > float(self.config["max_cost_usd"]):
                 raise BudgetExhaustedError("El límite de coste ha sido alcanzado.")
             self.reserved_usd += amount
+        self.operation_ledger.record_cost(self.config["id"], "reserved", amount, provider="budget")
 
     def release(self, amount):
         with self.media_lock:
             self.reserved_usd = max(0.0, self.reserved_usd - amount)
+        self.operation_ledger.record_cost(self.config["id"], "released", amount, provider="budget")
 
     def find_model(self):
         configured_model = os.environ.get("VYT_WHISPER_MODEL", "").strip()
@@ -636,7 +639,13 @@ class Pipeline:
             )
         except OperationRecoveryRequired as error:
             raise PaidAssetRecoveryError(str(error)) from error
+        if resume_job_id:
+            self.operation_ledger.record_cost(
+                self.config["id"], "avoided_duplicate", 0.35 * self.algrow.CREDIT_USD,
+                provider="algrow", operation_key=operation_key,
+            )
         estimated = 0.0 if resume_job_id else 0.35 * self.algrow.CREDIT_USD
+        charged_before = self.algrow.spent_usd
         self.reserve(estimated)
         try:
             try:
@@ -658,6 +667,10 @@ class Pipeline:
                 raise
         finally:
             self.release(estimated)
+        charged = max(0.0, self.algrow.spent_usd - charged_before)
+        self.operation_ledger.record_cost(
+            self.config["id"], "charged", charged, provider="algrow", operation_key=operation_key,
+        )
         self.operation_ledger.mark_completed(operation_key, _remote_url)
         return self.review_asset(scene, output)
 
@@ -675,7 +688,13 @@ class Pipeline:
             )
         except OperationRecoveryRequired as error:
             raise PaidAssetRecoveryError(str(error)) from error
+        if resume_uuid:
+            self.operation_ledger.record_cost(
+                self.config["id"], "avoided_duplicate", self.geminigen.ESTIMATED_CLIP_USD,
+                provider="snapgen", operation_key=operation_key,
+            )
         estimated = 0.0 if resume_uuid else self.geminigen.ESTIMATED_CLIP_USD
+        charged_before = self.geminigen.spent_usd
         self.reserve(estimated)
         try:
             try:
@@ -701,6 +720,10 @@ class Pipeline:
                 raise
         finally:
             self.release(estimated)
+        charged = max(0.0, self.geminigen.spent_usd - charged_before)
+        self.operation_ledger.record_cost(
+            self.config["id"], "charged", charged, provider="snapgen", operation_key=operation_key,
+        )
         self.operation_ledger.mark_completed(operation_key, resume_uuid)
         return self.review_asset(scene, output)
 
