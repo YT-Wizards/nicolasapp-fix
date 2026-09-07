@@ -192,6 +192,41 @@ class ProviderParsingTests(unittest.TestCase):
         post.assert_not_called()
         self.assertEqual(client.spent_usd, 0.0)
 
+    @patch("providers.time.sleep", return_value=None)
+    @patch("providers.requests.get")
+    @patch("providers.requests.post")
+    def test_veo_retries_timed_out_submit_with_same_idempotency_key(self, post, get, _sleep):
+        class CreatedResponse:
+            ok = True
+            status_code = 200
+
+            def json(self):
+                return {"data": {"uuid": "recovered-paid-uuid"}}
+
+        class StatusResponse:
+            ok = True
+            status_code = 200
+
+            def json(self):
+                return {"data": {"status": 3, "error_message": "stop after recovery"}}
+
+        post.side_effect = [requests.Timeout("read timed out"), CreatedResponse()]
+        get.return_value = StatusResponse()
+        client = GeminiGenClient("key")
+        with self.assertRaisesRegex(ProviderError, "stop after recovery"):
+            client.generate_video(
+                "prompt", Path("/tmp/video.mp4"), idempotency_key="operation-123",
+            )
+        self.assertEqual(post.call_count, 2)
+        self.assertEqual(
+            post.call_args_list[0].kwargs["headers"].get("Idempotency-Key"),
+            "operation-123",
+        )
+        self.assertEqual(
+            post.call_args_list[1].kwargs["headers"].get("Idempotency-Key"),
+            "operation-123",
+        )
+
     def test_extracts_json_after_plain_language(self):
         value = _extract_json('Result follows: {"pass": true, "score": 80} trailing text')
         self.assertEqual(value, {"pass": True, "score": 80})

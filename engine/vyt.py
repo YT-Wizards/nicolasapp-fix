@@ -737,6 +737,7 @@ class Pipeline:
                     ),
                     on_stage=lambda stage: self.operation_ledger.mark_polling(operation_key)
                     if stage == "polling" else self.operation_ledger.mark_download_pending(operation_key),
+                    idempotency_key=operation_key,
                     reference_images=(
                         [self.presenter_reference]
                         if scene.get("presenter_broll") and self.presenter_reference else None

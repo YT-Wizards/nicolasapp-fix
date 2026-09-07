@@ -715,7 +715,7 @@ class GeminiGenClient:
     def headers(self):
         return {"x-api-key": self.api_key}
 
-    def generate_video(self, prompt, output_path, timeout=1500, resume_uuid=None, on_created=None, on_stage=None, reference_images=None):
+    def generate_video(self, prompt, output_path, timeout=1500, resume_uuid=None, on_created=None, on_stage=None, reference_images=None, idempotency_key=None):
         # Every ordinary beat is an independent text-to-video request.  A small
         # number of presenter-continuity beats may include the *source presenter*
         # under SnapGen's documented `ref_images` field.  We never feed a prior
@@ -747,35 +747,51 @@ class GeminiGenClient:
             self.request_gate.acquire(timeout=_remaining_timeout(deadline, 120))
             try:
                 self.circuit_breaker.before_request()
-                try:
-                    response = requests.post(
-                        "https://api.snapgen.ai/uapi/v1/video-gen/veo",
-                        headers={**self.headers, "Accept": "application/json"},
-                        files=multipart,
-                        timeout=_remaining_timeout(deadline, 120),
-                    )
-                    if not response.ok:
-                        retry_after = None
-                        try:
-                            retry_after = float(response.headers.get("Retry-After"))
-                        except (AttributeError, TypeError, ValueError):
-                            pass
-                        raise ProviderHTTPError(
-                            response.status_code, response.text[:800], retry_after=retry_after,
+                created = None
+                submit_attempts = 2 if idempotency_key else 1
+                for attempt in range(submit_attempts):
+                    try:
+                        submit_headers = {**self.headers, "Accept": "application/json"}
+                        if idempotency_key:
+                            submit_headers["Idempotency-Key"] = str(idempotency_key)
+                        response = requests.post(
+                            "https://api.snapgen.ai/uapi/v1/video-gen/veo",
+                            headers=submit_headers,
+                            files=multipart,
+                            timeout=_remaining_timeout(deadline, 120),
                         )
-                    created = response.json()
-                except requests.RequestException as error:
-                    self.circuit_breaker.record_failure()
-                    raise ProviderError(str(error)) from error
-                except ProviderHTTPError as error:
-                    if _is_transient_provider_error(error):
+                        if not response.ok:
+                            retry_after = None
+                            try:
+                                retry_after = float(response.headers.get("Retry-After"))
+                            except (AttributeError, TypeError, ValueError):
+                                pass
+                            raise ProviderHTTPError(
+                                response.status_code, response.text[:800], retry_after=retry_after,
+                            )
+                        created = response.json()
+                        break
+                    except requests.RequestException as error:
+                        if attempt + 1 < submit_attempts and _is_transient_provider_error(error):
+                            _sleep_before(deadline, 2)
+                            continue
                         self.circuit_breaker.record_failure()
-                    raise
-                except ValueError as error:
-                    self.circuit_breaker.record_failure()
-                    raise ProviderError("SnapGen devolvió una respuesta que no era JSON.") from error
-                else:
-                    self.circuit_breaker.record_success()
+                        raise ProviderTemporarilyUnavailableError(
+                            "SnapGen no confirmó la creación del clip; se reintentó con el mismo Idempotency-Key."
+                        ) from error
+                    except ProviderHTTPError as error:
+                        if attempt + 1 < submit_attempts and _is_transient_provider_error(error):
+                            _sleep_before(deadline, _retry_delay(error, 2))
+                            continue
+                        if _is_transient_provider_error(error):
+                            self.circuit_breaker.record_failure()
+                        raise
+                    except ValueError as error:
+                        self.circuit_breaker.record_failure()
+                        raise ProviderError("SnapGen devolvió una respuesta que no era JSON.") from error
+                if created is None:
+                    raise ProviderTemporarilyUnavailableError("SnapGen no confirmó la creación del clip.")
+                self.circuit_breaker.record_success()
             finally:
                 self.request_gate.release()
             payload = created.get("data") if isinstance(created.get("data"), dict) else created
