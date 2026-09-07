@@ -22,6 +22,21 @@ let lastConnectionCheck = null;
 let jobStore = null;
 let appIsQuitting = false;
 
+function runtimeLog(message, details = {}) {
+  try {
+    const file = path.join(app.getPath('userData'), 'vyt-runtime.log');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.appendFileSync(file, `${new Date().toISOString()} ${message} ${JSON.stringify(details)}\n`);
+  } catch { /* Diagnostics must never take down the app. */ }
+}
+
+process.on('uncaughtException', (error) => {
+  runtimeLog('uncaughtException', { message: error?.message, stack: error?.stack });
+});
+process.on('unhandledRejection', (reason) => {
+  runtimeLog('unhandledRejection', { reason: String(reason), stack: reason?.stack });
+});
+
 const rootDir = () => {
   if (!app.isPackaged) return path.resolve(__dirname, '..');
   const unpacked = path.join(process.resourcesPath, 'app.asar.unpacked');
@@ -416,6 +431,13 @@ function startJob(job) {
   child.stderr.on('data', (chunk) => { stderrTail = `${stderrTail}${chunk}`.slice(-8000); });
   child.on('error', (error) => { spawnError = error; });
   child.on('close', (code) => {
+    runtimeLog('engine-close', {
+      jobId: job.id,
+      code,
+      signal: child.signalCode || null,
+      spawnError: spawnError?.message || null,
+      stderrTail: stderrTail.slice(-2000),
+    });
     processes.delete(job.id);
     if (job.status === 'cancelled' || (appIsQuitting && job.status === 'paused')) {
       if (jobStore) jobStore.upsertJob(job);
@@ -432,7 +454,7 @@ function startJob(job) {
     if (!result) result = {
       ok: code === 0 && fs.existsSync(outputPath),
       output_path: fs.existsSync(outputPath) ? outputPath : '',
-      error: spawnError?.message || stderrTail.trim() || `El proceso terminó con código ${code}.`
+      error: spawnError?.message || stderrTail.trim() || `El proceso terminó con código ${code}${child.signalCode ? ` por señal ${child.signalCode}` : ''}.`
     };
     completeJob(job, result);
     runNextJobs();
@@ -670,10 +692,16 @@ function createWindow() {
     }
   });
   mainWindow.loadFile(uiFile('index.html'));
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    runtimeLog('render-process-gone', details || {});
+  });
+  mainWindow.webContents.on('unresponsive', () => runtimeLog('window-unresponsive'));
+  mainWindow.webContents.on('responsive', () => runtimeLog('window-responsive'));
   mainWindow.on('closed', () => { mainWindow = null; });
 }
 
 app.whenReady().then(async () => {
+  runtimeLog('app-ready', { version: app.getVersion(), platform: process.platform, arch: process.arch });
   loadPersistentState();
   if (process.argv.includes('--test-veo-one')) {
     try { console.log('VYT_VEO_TEST:' + JSON.stringify({ ok: true, ...(await testOneVeoClip()) })); }
@@ -699,11 +727,13 @@ app.whenReady().then(async () => {
     return;
   }
   createWindow();
+  runtimeLog('window-created');
   runNextJobs();
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 app.on('before-quit', () => {
+  runtimeLog('before-quit', { activeJobs: [...processes.keys()] });
   appIsQuitting = true;
   for (const timer of retryTimers.values()) clearTimeout(timer);
   retryTimers.clear();
