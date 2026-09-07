@@ -477,6 +477,59 @@ def _scene_text(value):
     return re.sub(r"\s+", " ", str(value or "").strip().lower())
 
 
+_FIRST_PERSON_AUTHORITY = re.compile(
+    r"\b(?:my name is|i am|i'm|i worked|i ran|i sat|i spent|i retired|"
+    r"i have worked|i have seen|my experience|years working|"
+    r"me llamo|trabajé|dirigí|me senté|me jubilé)\b",
+    re.IGNORECASE,
+)
+_EXPLICIT_INTERVIEW = re.compile(
+    r"\b(?:sat across the table|across the table|interview(?:ed|ing)?|"
+    r"spoke with|talked with|met with|sat with|entrevist)\b",
+    re.IGNORECASE,
+)
+_TALKING_HEAD_MARKERS = re.compile(
+    r"\b(?:talking head|speaking to camera|speaks to camera|looks into camera|"
+    r"direct to camera|direct-to-camera|person speaking|man speaking|woman speaking|"
+    r"interview subject|portrait interview)\b",
+    re.IGNORECASE,
+)
+
+
+def enforce_narration_visual_contract(scenes):
+    """Remove generic generated talking heads that do not depict the beat."""
+    for scene in scenes or []:
+        if scene.get("type") == "avatar":
+            continue
+        narration = _scene_text(scene.get("narration"))
+        prompt = _scene_text(
+            " ".join(str(scene.get(key) or "") for key in ("literal_subject", "image_prompt", "video_prompt"))
+        )
+        first_person_authority = bool(_FIRST_PERSON_AUTHORITY.search(narration))
+        explicit_interview = bool(_EXPLICIT_INTERVIEW.search(narration))
+        generic_talking_head = bool(_TALKING_HEAD_MARKERS.search(prompt))
+        if (first_person_authority and not explicit_interview) or (generic_talking_head and not explicit_interview):
+            scene["requested_type"] = scene.get("requested_type", scene.get("type"))
+            scene["contract_fallback"] = "source_presenter_for_identity_or_talking_head"
+            scene["type"] = "avatar"
+            _normalize_scene(scene)
+            continue
+        if explicit_interview and scene.get("type") == "video":
+            scene["reject_if"] = list(scene.get("reject_if") or [])
+            scene["reject_if"].extend([
+                "direct-to-camera speech",
+                "a different interview subject appearing between adjacent beats",
+                "an unrelated third person",
+            ])
+            scene["reject_if"] = list(dict.fromkeys(scene["reject_if"]))
+            scene["video_prompt"] = (
+                f"{scene.get('video_prompt') or scene.get('literal_subject')}. "
+                "Two people remain the same throughout, seated across one table, "
+                "with natural side-view interaction and no one speaking directly to camera."
+            ).strip()
+    return scenes
+
+
 def scene_fingerprint(scene):
     """Return the stable semantic identity used by the pre-generation gate."""
     prompt = scene.get("video_prompt") or scene.get("image_prompt") or scene.get("literal_subject")
@@ -863,7 +916,7 @@ def plan_scenes(client, beats, bible, batch_size=6, progress=None, resume_planne
             checkpoint(planned)
         if progress:
             progress(batch_number, total_batches)
-    return planned
+    return enforce_narration_visual_contract(planned)
 
 
 def review_scene_plan(client, scenes, bible, batch_size=12, progress=None, resume_reviewed=None, checkpoint=None):
@@ -922,4 +975,4 @@ def review_scene_plan(client, scenes, bible, batch_size=12, progress=None, resum
             checkpoint(reviewed)
         if progress:
             progress(batch_number, total_batches)
-    return reviewed
+    return enforce_narration_visual_contract(reviewed)

@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "engine"))
 
 from planning import (
     analysis_reserve_for_duration, build_schedule, editorial_types, enforce_budget, enforce_presenter_broll,
+    enforce_narration_visual_contract,
     force_avatar_window, image_fallback_scene, make_beats,
     plan_scenes, rebalance_scenes_for_budget, review_scene_plan,
     stratified_generation_order, validate_scene_plan, visual_ratios_for_bible,
@@ -58,6 +59,29 @@ class MalformedFieldsPlanner:
 
 
 class PlanningTests(unittest.TestCase):
+    def test_first_person_biography_uses_source_presenter_not_generated_faces(self):
+        scenes = [{
+            "id": "b001", "type": "video", "requested_type": "video",
+            "narration": "My name is Frank Delaney. I worked in financial crimes.",
+            "literal_subject": "A man speaking directly to camera in an office",
+            "video_prompt": "A portrait interview subject speaking to camera in an office",
+        }]
+        enforce_narration_visual_contract(scenes)
+        self.assertEqual(scenes[0]["type"], "avatar")
+        self.assertEqual(scenes[0]["contract_fallback"], "source_presenter_for_identity_or_talking_head")
+
+    def test_across_table_beat_keeps_interview_broll_but_locks_identity(self):
+        scenes = [{
+            "id": "b002", "type": "video", "requested_type": "video",
+            "narration": "I sat across the table from people who got taken.",
+            "literal_subject": "Two people in an interview",
+            "video_prompt": "Two people talking in an interview",
+        }]
+        enforce_narration_visual_contract(scenes)
+        self.assertEqual(scenes[0]["type"], "video")
+        self.assertIn("a different interview subject appearing between adjacent beats", scenes[0]["reject_if"])
+        self.assertIn("remain the same throughout", scenes[0]["video_prompt"])
+
     def test_scene_validation_converts_adjacent_duplicate_narration_to_free_presenter(self):
         scenes = [
             {"id": "b0001", "type": "image", "requested_type": "image", "start": 0, "end": 4, "narration": "one factual sentence", "literal_subject": "one object", "image_prompt": "one object on a table"},
