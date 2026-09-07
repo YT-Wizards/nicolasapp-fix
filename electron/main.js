@@ -396,15 +396,9 @@ async function createJob(payload) {
   // paid AI analysis so a provider incident never creates a failed history item.
   let veoHealth;
   try {
-    const response = await fetch('https://api.snapgen.ai/api/v1/models/status?window=1h', {
-      headers: { Accept: 'application/json' },
-      signal: AbortSignal.timeout(15000)
-    });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const payload = await response.json();
-    veoHealth = (payload.models || []).find((item) => item.group_key === 'veo-3.1-fast');
-  } catch {
-    throw new Error('VYT no pudo comprobar gratuitamente el estado de Veo. No se inició el trabajo para proteger tus créditos.');
+    veoHealth = await fetchVeoHealth();
+  } catch (error) {
+    throw new Error(`VYT no pudo comprobar gratuitamente el estado de Veo: ${error.message}. No se inició el trabajo para proteger tus créditos.`);
   }
   if (!veoHealth) {
     throw new Error('SnapGen no publicó el estado de Veo 3.1 Fast. VYT no inició el trabajo para proteger tus créditos.');
@@ -487,6 +481,25 @@ async function testGatewayModel(apiKey, model, order) {
   const data = await response.json();
   if (!data?.choices?.[0]?.message) throw new Error('respuesta vacía');
   return true;
+}
+
+async function fetchVeoHealth() {
+  let lastError = null;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const response = await fetch('https://api.snapgen.ai/api/v1/models/status?window=1h', {
+        headers: { Accept: 'application/json', 'User-Agent': 'VYT/1.0' },
+        signal: AbortSignal.timeout(15000)
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const payload = await response.json();
+      return (payload.models || []).find((item) => item.group_key === 'veo-3.1-fast') || null;
+    } catch (error) {
+      lastError = error;
+      if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 1500 * (attempt + 1)));
+    }
+  }
+  throw new Error(`health-check failed after 3 attempts: ${lastError?.message || 'unknown error'}`);
 }
 
 async function testSettings() {
