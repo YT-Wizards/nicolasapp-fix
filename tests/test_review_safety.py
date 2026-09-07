@@ -81,12 +81,11 @@ class ReviewRecoveryTests(unittest.TestCase):
         output = first.assets / "b001.png"
         output.write_bytes(b"x" * 2000)
         first.save_pending_image_job(scene, "already-paid")
-        with self.assertRaises(QualityReviewPendingError):
-            first.cached_asset_for(scene)
+        self.assertEqual(first.cached_asset_for(scene), output)
         self.assertTrue(output.exists())
         self.assertEqual(first.checkpoint["asset_reviews"]["b001"]["status"], "pending")
         self.assertEqual(first.pending_image_job_for(scene), "")
-        self.assertNotIn("b001", first.checkpoint.get("completed_assets", {}))
+        self.assertTrue(first.checkpoint["completed_assets"]["b001"]["review_pending"])
         second = self.pipeline()
         second.reviewer.chat_json = Mock(return_value=accepted())
         self.assertEqual(second.cached_asset_for(scene), output)
@@ -135,8 +134,7 @@ class ReviewRecoveryTests(unittest.TestCase):
             Path(output).write_bytes(b"x" * 2000)
             return Path(output), "https://example.test/image.png"
         pipeline.algrow.generate_image = Mock(side_effect=generate)
-        with self.assertRaises(QualityReviewPendingError):
-            pipeline.generate_one(scene)
+        self.assertEqual(pipeline.generate_one(scene), pipeline.assets / "b005.png")
         pipeline.algrow.generate_image.assert_called_once()
         self.assertTrue((pipeline.assets / "b005.png").exists())
         pipeline.geminigen.generate_video.assert_not_called()
@@ -150,8 +148,7 @@ class ReviewRecoveryTests(unittest.TestCase):
         pipeline.record_asset_review(scene, output, "passed")
         pipeline.mark_asset_completed(scene, output)
         output.write_bytes(b"y" * 3000)
-        with self.assertRaises(QualityReviewPendingError):
-            pipeline.cached_asset_for(scene)
+        self.assertEqual(pipeline.cached_asset_for(scene), output)
         self.assertTrue(output.exists())
 
     @patch("vyt.probe", return_value={"duration": 8, "width": 1920, "height": 1080})
@@ -230,8 +227,7 @@ class ReviewRecoveryTests(unittest.TestCase):
                         raise OSError("disk full")
                     return original(**values)
                 pipeline.save_checkpoint = fail_save
-                with self.assertRaises(QualityReviewPendingError):
-                    pipeline.generate_one(scene)
+                self.assertEqual(pipeline.generate_one(scene), pipeline.assets / "b009.png")
                 pipeline.algrow.generate_image.assert_called_once()
                 self.assertTrue((pipeline.assets / "b009.png").exists())
                 pipeline.save_checkpoint = original

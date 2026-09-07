@@ -431,6 +431,20 @@ class Pipeline:
             if not legacy_approved and not approved:
                 try:
                     self.review_asset(scene, path)
+                except QualityReviewPendingError as error:
+                    # The paid file is structurally valid and already local.
+                    # A temporary reviewer outage must not discard it or stop
+                    # the whole production; keep the pending receipt for a
+                    # later review-only resume.
+                    completed[scene["id"]] = {
+                        "type": recovered_type,
+                        "file": path.name,
+                        "recovered": True,
+                        "review_pending": True,
+                    }
+                    self.record_failure(scene, "review_pending", error)
+                    self.save_checkpoint(completed_assets=completed)
+                    return path
                 except QualityReviewError:
                     scene.update(image_fallback_scene(scene))
                     completed.pop(scene["id"], None)
@@ -730,7 +744,11 @@ class Pipeline:
             self.config["id"], "charged", charged, provider="algrow", operation_key=operation_key,
         )
         self.operation_ledger.mark_completed(operation_key, _remote_url)
-        return self.review_asset(scene, output)
+        try:
+            return self.review_asset(scene, output)
+        except QualityReviewPendingError as error:
+            self.record_failure(scene, "review_pending", error)
+            return output
 
     def generate_video_scene(self, scene, retry_guidance=""):
         output = self.assets / f"{scene['id']}.mp4"
@@ -790,7 +808,11 @@ class Pipeline:
             self.config["id"], "charged", charged, provider="snapgen", operation_key=operation_key,
         )
         self.operation_ledger.mark_completed(operation_key, resume_uuid)
-        return self.review_asset(scene, output)
+        try:
+            return self.review_asset(scene, output)
+        except QualityReviewPendingError as error:
+            self.record_failure(scene, "review_pending", error)
+            return output
 
     def generate_one(self, scene):
         self.check_stop()
