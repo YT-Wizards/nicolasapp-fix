@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld('vyt', {
   chooseProductQr: () => ipcRenderer.invoke('choose-product-qr'),
   inspectVideo: (filePath) => ipcRenderer.invoke('inspect-video', filePath),
   createJob: (payload) => ipcRenderer.invoke('create-job', payload),
+  resumeJob: (historyId) => ipcRenderer.invoke('resume-job', historyId),
   cancelJob: (jobId) => ipcRenderer.invoke('cancel-job', jobId),
   getState: () => ipcRenderer.invoke('get-state'),
   getSettingsStatus: () => ipcRenderer.invoke('settings-status'),

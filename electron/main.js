@@ -47,6 +47,27 @@ function loadPersistentState() {
   state.jobs = jobStore.loadJobs();
   const saved = readJson(userFile('history.json'), { history: [] });
   state.history = Array.isArray(saved.history) ? saved.history.slice(0, 50) : [];
+  // Backfill resume metadata for failed jobs written before the History
+  // resume button existed. The durable SQLite job row still contains the
+  // original source and settings.
+  let historyChanged = false;
+  for (const item of state.history) {
+    if (item.status !== 'failed' || item.resumable || !jobStore) continue;
+    const job = jobStore.getJob(item.id);
+    if (!job?.source || !fs.existsSync(job.source)) continue;
+    item.resumable = true;
+    item.testMode = Boolean(job.testMode);
+    item.resumePayload = {
+      source: job.source,
+      branding: Boolean(job.branding),
+      testMode: Boolean(job.testMode),
+      productSale: job.productSale?.enabled && job.productSale?.cardPath && fs.existsSync(job.productSale.cardPath)
+        ? { enabled: true, cardPath: job.productSale.cardPath }
+        : { enabled: false }
+    };
+    historyChanged = true;
+  }
+  if (historyChanged) persistHistory();
   const cardsDir = userFile('product-cards');
   const referencedCards = new Set(
     state.jobs.map((job) => job.productSale?.cardPath).filter(Boolean),
@@ -269,6 +290,7 @@ function completeJob(job, result) {
   const historyItem = {
     id: job.id,
     title: job.title,
+    testMode: Boolean(job.testMode),
     status: result.ok ? 'completed' : 'failed',
     outputPath: result.output_path || '',
     costUsd: Number(result.cost_usd || job.spentUsd || 0),
@@ -281,7 +303,16 @@ function completeJob(job, result) {
     requestedCounts: result.requested_counts || {},
     failures: Array.isArray(result.failures) ? result.failures : [],
     warning: result.warning || '',
-    maxCostUsd: Number(job.maxCostUsd || (job.testMode ? TEST_MAX_COST_USD : FULL_MAX_COST_USD))
+    maxCostUsd: Number(job.maxCostUsd || (job.testMode ? TEST_MAX_COST_USD : FULL_MAX_COST_USD)),
+    resumable: !result.ok && fs.existsSync(job.source),
+    resumePayload: !result.ok && fs.existsSync(job.source) ? {
+      source: job.source,
+      branding: Boolean(job.branding),
+      testMode: Boolean(job.testMode),
+      productSale: job.productSale?.enabled && job.productSale?.cardPath && fs.existsSync(job.productSale.cardPath)
+        ? { enabled: true, cardPath: job.productSale.cardPath }
+        : { enabled: false }
+    } : null
   };
   state.history.unshift(historyItem);
   persistHistory();
@@ -294,7 +325,7 @@ function completeJob(job, result) {
     spentUsd: historyItem.costUsd,
     error: historyItem.error
   });
-  removeProductCard(job);
+  if (result.ok) removeProductCard(job);
 }
 
 function runNextJobs() {
@@ -417,10 +448,10 @@ async function createJob(payload) {
   const jobId = crypto.randomUUID();
   let productSale = { enabled: false };
   if (payload.productSale?.enabled) {
-    productSale = {
-      enabled: true,
-      cardPath: saveProductCard(jobId, payload.productSale.cardDataUrl)
-    };
+    const existingCard = String(payload.productSale.cardPath || '');
+    productSale = existingCard && fs.existsSync(existingCard)
+      ? { enabled: true, cardPath: existingCard }
+      : { enabled: true, cardPath: saveProductCard(jobId, payload.productSale.cardDataUrl) };
   }
   const job = {
     id: jobId,
@@ -684,6 +715,18 @@ ipcMain.handle('choose-product-qr', async () => {
 });
 ipcMain.handle('inspect-video', (_event, filePath) => inspectVideo(filePath));
 ipcMain.handle('create-job', (_event, payload) => createJob(payload));
+ipcMain.handle('resume-job', (_event, historyId) => {
+  const item = state.history.find((entry) => entry.id === String(historyId || ''));
+  if (!item?.resumable || !item.resumePayload) throw new Error('Это видео нельзя возобновить из сохранённого checkpoint.');
+  if (!fs.existsSync(item.resumePayload.source)) throw new Error('Исходный файл больше не найден по сохранённому пути.');
+  return createJob({
+    title: item.title,
+    source: item.resumePayload.source,
+    branding: item.resumePayload.branding,
+    testMode: item.resumePayload.testMode,
+    productSale: item.resumePayload.productSale
+  });
+});
 ipcMain.handle('get-state', () => publicState());
 ipcMain.handle('settings-status', () => settingsStatus());
 ipcMain.handle('settings-save', (_event, incoming) => {

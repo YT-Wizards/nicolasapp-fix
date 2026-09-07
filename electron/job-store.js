@@ -115,6 +115,12 @@ class JobStore {
     try { return JSON.parse(row.payload_json); } catch { return null; }
   }
 
+  getJob(jobId) {
+    const row = this.db.prepare('SELECT payload_json FROM jobs WHERE id=?').get(String(jobId || ''));
+    if (!row) return null;
+    try { return JSON.parse(row.payload_json); } catch { return null; }
+  }
+
   costTotals(jobId) {
     return this.db.prepare(`
       SELECT kind, ROUND(SUM(amount_usd), 8) AS amount
