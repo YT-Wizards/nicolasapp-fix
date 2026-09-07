@@ -687,13 +687,15 @@ class GeminiGenClient:
         if not api_key:
             raise ProviderError("Falta la API key de GeminiGen.")
         self.api_key = api_key
+        self.model = "veo-3.1-fast"
         self.spent_usd = 0.0
         self._spend_lock = threading.Lock()
         self.circuit_breaker = circuit_breaker or provider_circuit("snapgen")
         self.request_gate = request_gate or provider_gate("snapgen")
 
-    def ensure_available(self, minimum_success_rate=80.0):
+    def ensure_available(self, model_name=None, minimum_success_rate=80.0):
         """Fail for free before any paid work when SnapGen reports Veo trouble."""
+        model_name = str(model_name or self.model).strip()
         try:
             response = requests.get(
                 "https://api.snapgen.ai/api/v1/models/status",
@@ -715,19 +717,19 @@ class GeminiGenClient:
 
         models = payload.get("models") or []
         model = next(
-            (item for item in models if item.get("group_key") == "veo-3.1-fast"),
+            (item for item in models if item.get("group_key") == model_name),
             None,
         )
         if not model:
             raise ProviderError(
-                "SnapGen no publicó el estado de Veo 3.1 Fast. "
+                f"SnapGen no publicó el estado de {model_name}. "
                 "VYT no inició el trabajo para proteger tus créditos."
             )
         rate = float(model.get("success_rate") or 0)
         status = str(model.get("status") or "Unknown")
         if status.lower() != "operational" or rate < minimum_success_rate:
             raise ProviderError(
-                f"Veo 3.1 Fast está inestable en SnapGen ({rate:.0f}% de éxito, {status}). "
+                f"{model_name} está inestable en SnapGen ({rate:.0f}% de éxito, {status}). "
                 "VYT no inició el trabajo ni gastó créditos. Inténtalo más tarde."
             )
         return {"status": status, "success_rate": rate}
@@ -745,7 +747,7 @@ class GeminiGenClient:
         deadline = time.monotonic() + max(0.0, float(timeout))
         multipart = [
             ("prompt", (None, prompt)),
-            ("model", (None, "veo-3.1-fast")),
+            ("model", (None, self.model)),
             ("resolution", (None, "720p")),
             ("duration", (None, "8")),
             ("aspect_ratio", (None, "16:9")),

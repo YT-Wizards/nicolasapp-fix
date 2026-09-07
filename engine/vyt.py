@@ -38,6 +38,7 @@ ANALYSIS_CACHE_VERSION = "2026-08-28-budget-distribution-v6"
 IMAGE_OPERATION_TIMEOUT = 10 * 60
 VIDEO_OPERATION_TIMEOUT = 25 * 60
 AI_OPERATION_TIMEOUT = 4 * 60
+VEO_MODEL_CASCADE = ("veo-3.1-fast", "veo-3.1-lite")
 
 
 class QualityReviewError(RegeneratableError):
@@ -736,7 +737,7 @@ class Pipeline:
         prompt = video_prompt(scene, retry_guidance)
         operation_key = self.operation_ledger.operation_key(
             self.config["id"], scene["id"], "video", "snapgen", prompt,
-            {"model": "veo-3.1-fast", "resolution": "720p", "duration": "8", "aspect_ratio": "16:9"},
+            {"model": self.geminigen.model, "resolution": "720p", "duration": "8", "aspect_ratio": "16:9"},
         )
         try:
             resume_uuid = self.pending_video_job_for(scene) or self.operation_ledger.prepare(
@@ -1138,14 +1139,32 @@ class Pipeline:
         if video_candidates:
             # This public status check is free and protects direct/CLI runs if the
             # desktop-side check was skipped or the status changed meanwhile.
-            self.event(19, "Comprobando Veo", "Verificando el servicio sin gastar créditos")
-            try:
-                self.geminigen.ensure_available()
-            except ProviderError as error:
+            self.event(19, "Comprobando Veo", "Verificando modelos sin gastar créditos")
+            selected_model = None
+            availability_errors = []
+            for model_name in VEO_MODEL_CASCADE:
+                try:
+                    self.geminigen.ensure_available(model_name=model_name)
+                    selected_model = model_name
+                    break
+                except ProviderError as error:
+                    availability_errors.append(f"{model_name}: {error}")
+            if selected_model:
+                self.geminigen.model = selected_model
+                if selected_model != VEO_MODEL_CASCADE[0]:
+                    self.event(
+                        19, "Creando B-roll",
+                        f"Veo Fast no disponible; cambiado a {selected_model}",
+                        estimate=estimated_media,
+                    )
+            else:
                 # Veo is optional for the editorial result. Preserve the exact
                 # beat and continue with a still through Algrow instead of
                 # discarding the analysis and every already recovered asset.
-                fallback_reason = f"Veo no disponible; imagen automática: {error}"
+                fallback_reason = (
+                    "Ningún modelo Veo disponible; imágenes automáticas: "
+                    + " | ".join(availability_errors)
+                )
                 for scene in video_candidates:
                     scene.update(image_fallback_scene(scene))
                     scene["fallback_reason"] = fallback_reason
