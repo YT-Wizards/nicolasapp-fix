@@ -1,6 +1,7 @@
 import tempfile
 import threading
 import unittest
+import sqlite3
 from pathlib import Path
 import sys
 
@@ -20,6 +21,23 @@ class OperationLedgerTests(unittest.TestCase):
             )
             with self.assertRaises(OperationRecoveryRequired):
                 ledger.prepare(key, "job", "scene", "snapgen", "video", ledger.prompt_hash("literal prompt"))
+            ledger.close()
+
+    def test_stale_prepared_operation_can_retry_same_idempotent_submit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "vyt.sqlite"
+            ledger = OperationLedger(database)
+            key = ledger.operation_key("job", "scene", "video", "snapgen", "literal prompt", {"duration": 8})
+            ledger.prepare(key, "job", "scene", "snapgen", "video", ledger.prompt_hash("literal prompt"))
+            with sqlite3.connect(database) as connection:
+                connection.execute(
+                    "UPDATE provider_operations SET updated_at=datetime('now', '-120 seconds') WHERE operation_key=?",
+                    (key,),
+                )
+            self.assertEqual(
+                ledger.prepare(key, "job", "scene", "snapgen", "video", ledger.prompt_hash("literal prompt")),
+                "",
+            )
             ledger.close()
 
     def test_submitted_operation_is_reused(self):

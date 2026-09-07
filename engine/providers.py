@@ -791,7 +791,21 @@ class GeminiGenClient:
                                 response.status_code, response.text[:800], retry_after=retry_after,
                             )
                         created = response.json()
-                        break
+                        payload = created.get("data") if isinstance(created.get("data"), dict) else created
+                        conversion_uuid = str(payload.get("uuid") or "").strip()
+                        if conversion_uuid:
+                            break
+                        if attempt + 1 < submit_attempts:
+                            # A paid request may have been accepted even when
+                            # SnapGen returned a 2xx body without its UUID.
+                            # Retry the identical request and idempotency key;
+                            # never generate a replacement with a new key.
+                            _sleep_before(deadline, 2)
+                            continue
+                        raise ProviderTemporarilyUnavailableError(
+                            "SnapGen принял запрос, но не вернул UUID операции; "
+                            "повторим ту же idempotent-операцию позже."
+                        )
                     except requests.RequestException as error:
                         if attempt + 1 < submit_attempts and _is_transient_provider_error(error):
                             _sleep_before(deadline, 2)

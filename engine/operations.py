@@ -12,6 +12,8 @@ class OperationRecoveryRequired(RuntimeError):
 class OperationLedger:
     """Conservative local ledger for paid provider operations."""
 
+    PREPARED_RETRY_AFTER_SECONDS = 90
+
     def __init__(self, database_path):
         self.database_path = Path(database_path)
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
@@ -84,17 +86,37 @@ class OperationLedger:
     def prepare(self, operation_key, job_id, scene_id, provider, asset_type, prompt_hash):
         with self.lock, self.connection:
             row = self.connection.execute(
-                "SELECT status, remote_job_id FROM provider_operations WHERE operation_key=?",
+                "SELECT status, remote_job_id, updated_at FROM provider_operations WHERE operation_key=?",
                 (operation_key,),
             ).fetchone()
             if row:
-                status, remote_job_id = row
+                status, remote_job_id, updated_at = row
                 if status in {"submitted", "polling", "download_pending"} and remote_job_id:
                     return str(remote_job_id)
                 if status == "prepared":
+                    # A crash can happen after the durable prepare and before
+                    # the provider callback writes its remote ID. After a
+                    # short quiet period it is safe to retry the *same*
+                    # idempotent submission, rather than leaving the job
+                    # permanently blocked. Immediate concurrent callers still
+                    # receive recovery-required and cannot double-submit.
+                    stale = self.connection.execute(
+                        "SELECT updated_at <= datetime('now', ?) FROM provider_operations WHERE operation_key=?",
+                        (f"-{self.PREPARED_RETRY_AFTER_SECONDS} seconds", operation_key),
+                    ).fetchone()
+                    if stale and int(stale[0] or 0):
+                        self.connection.execute(
+                            """
+                            UPDATE provider_operations
+                            SET attempts=attempts+1, last_error=NULL, updated_at=CURRENT_TIMESTAMP
+                            WHERE operation_key=? AND status='prepared'
+                            """,
+                            (operation_key,),
+                        )
+                        return ""
                     raise OperationRecoveryRequired(
                         f"Платная операция {operation_key[:12]} была подготовлена, "
-                        "но remote ID не сохранился. Требуется reconciliation; новая покупка запрещена."
+                        "но remote ID не сохранился. Повтор будет разрешён после безопасной паузы."
                     )
                 if status == "completed":
                     return str(remote_job_id or "")
