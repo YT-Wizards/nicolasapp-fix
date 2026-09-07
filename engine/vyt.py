@@ -902,11 +902,6 @@ class Pipeline:
             product_card = Path(str(product_sale.get("card_path") or ""))
             if not product_card.exists() or product_card.stat().st_size < 500:
                 raise RuntimeError("No encuentro la tarjeta del QR. Vuelve a seleccionar el QR antes de crear el vídeo.")
-        # This public status check is free and deliberately happens before local
-        # transcription or paid story analysis. It also protects CLI/direct runs
-        # if the desktop-side check was skipped or the status changed meanwhile.
-        self.event(1, "Comprobando Veo", "Verificando el servicio sin gastar créditos")
-        self.geminigen.ensure_available()
         info = probe(source)
         duration = min(info["duration"], float(self.config.get("test_seconds") or info["duration"]))
         if duration <= 1:
@@ -1134,11 +1129,17 @@ class Pipeline:
         finally:
             self.recovering_paid_assets = False
         pending = [scene for scene in generatable if scene["id"] not in assets]
-        # Validate Veo before starting the rest of the paid batch. A broken endpoint,
-        # watermark policy or incompatible payload must not silently produce 0 clips.
+        # Validate Veo only when this resume actually needs a new video purchase.
+        # A checkpoint with recoverable/finished assets must remain usable during a
+        # temporary Veo outage; the preflight must not block review or rendering.
         video_candidates = stratified_generation_order(
             [scene for scene in pending if scene["type"] == "video"]
         )
+        if video_candidates:
+            # This public status check is free and protects direct/CLI runs if the
+            # desktop-side check was skipped or the status changed meanwhile.
+            self.event(19, "Comprobando Veo", "Verificando el servicio sin gastar créditos")
+            self.geminigen.ensure_available()
         first_video = None
         gate_attempted = set()
         gate_fallbacks = 0
