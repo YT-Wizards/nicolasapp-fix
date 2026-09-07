@@ -1139,7 +1139,27 @@ class Pipeline:
             # This public status check is free and protects direct/CLI runs if the
             # desktop-side check was skipped or the status changed meanwhile.
             self.event(19, "Comprobando Veo", "Verificando el servicio sin gastar créditos")
-            self.geminigen.ensure_available()
+            try:
+                self.geminigen.ensure_available()
+            except ProviderError as error:
+                # Veo is optional for the editorial result. Preserve the exact
+                # beat and continue with a still through Algrow instead of
+                # discarding the analysis and every already recovered asset.
+                fallback_reason = f"Veo no disponible; imagen automática: {error}"
+                for scene in video_candidates:
+                    scene.update(image_fallback_scene(scene))
+                    scene["fallback_reason"] = fallback_reason
+                video_candidates = []
+                self.save_checkpoint(
+                    reviewed_scenes=scenes,
+                    estimated_media=estimated_media,
+                    fallback_notice=fallback_reason,
+                )
+                self.event(
+                    19, "Creando B-roll",
+                    "Veo no disponible; las escenas de vídeo pasan a imágenes sin detener el job",
+                    estimate=estimated_media,
+                )
         first_video = None
         gate_attempted = set()
         gate_fallbacks = 0
