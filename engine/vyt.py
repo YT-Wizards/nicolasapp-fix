@@ -589,13 +589,26 @@ class Pipeline:
             except Exception as error:
                 self.record_failure(scene, "split_review_crop", error)
         last_error = None
+        response_schema = {
+            "type": "object",
+            "properties": {
+                "pass": {"type": "boolean"},
+                "semantic_score": {"type": "number", "minimum": 0, "maximum": 100},
+                "realism_score": {"type": "number", "minimum": 0, "maximum": 100},
+                "integrity_score": {"type": "number", "minimum": 0, "maximum": 100},
+                "issues": {"type": "array", "items": {"type": "string"}},
+                "retry_guidance": {"type": "string"},
+            },
+            "required": ["pass", "semantic_score", "realism_score", "integrity_score", "issues", "retry_guidance"],
+            "additionalProperties": False,
+        }
         try:
             try:
-                return validate_review_response(self.reviewer.chat_json(PLANNER_SYSTEM, prompt, images=[review_path], max_tokens=1600))
+                return validate_review_response(self.reviewer.chat_json(PLANNER_SYSTEM, prompt, images=[review_path], max_tokens=1600, response_schema=response_schema))
             except Exception as error:
                 last_error = error
             try:
-                result = validate_review_response(self.director.chat_json(PLANNER_SYSTEM, prompt, images=[review_path], max_tokens=1400))
+                result = validate_review_response(self.director.chat_json(PLANNER_SYSTEM, prompt, images=[review_path], max_tokens=1400, response_schema=response_schema))
                 self.record_failure(scene, "image_review_fallback", last_error)
                 return result
             except Exception as fallback_error:
@@ -629,13 +642,29 @@ class Pipeline:
         if scene.get("presenter_broll") and self.presenter_reference:
             review_images = [self.presenter_reference, strip]
         last_error = None
+        response_schema = {
+            "type": "object",
+            "properties": {
+                "pass": {"type": "boolean"},
+                "semantic_score": {"type": "number", "minimum": 0, "maximum": 100},
+                "realism_score": {"type": "number", "minimum": 0, "maximum": 100},
+                "integrity_score": {"type": "number", "minimum": 0, "maximum": 100},
+                "motion_score": {"type": "number", "minimum": 0, "maximum": 100},
+                "continuity_score": {"type": "number", "minimum": 0, "maximum": 100},
+                "watermark": {"type": "boolean"},
+                "issues": {"type": "array", "items": {"type": "string"}},
+                "retry_guidance": {"type": "string"},
+            },
+            "required": ["pass", "semantic_score", "realism_score", "integrity_score", "motion_score", "continuity_score", "watermark", "issues", "retry_guidance"],
+            "additionalProperties": False,
+        }
         try:
             try:
-                return validate_review_response(self.reviewer.chat_json(PLANNER_SYSTEM, prompt, images=review_images, max_tokens=1800), is_video=True)
+                return validate_review_response(self.reviewer.chat_json(PLANNER_SYSTEM, prompt, images=review_images, max_tokens=1800, response_schema=response_schema), is_video=True)
             except Exception as error:
                 last_error = error
             try:
-                result = validate_review_response(self.director.chat_json(PLANNER_SYSTEM, prompt, images=review_images, max_tokens=1600), is_video=True)
+                result = validate_review_response(self.director.chat_json(PLANNER_SYSTEM, prompt, images=review_images, max_tokens=1600, response_schema=response_schema), is_video=True)
                 self.record_failure(scene, "video_review_fallback", last_error)
                 return result
             except Exception as fallback_error:

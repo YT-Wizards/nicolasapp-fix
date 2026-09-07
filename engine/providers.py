@@ -455,7 +455,7 @@ class VercelGatewayClient:
             self.usage_callback(max(0.0, amount))
         return max(0.0, amount)
 
-    def chat_json(self, system, prompt, images=None, max_tokens=6000):
+    def chat_json(self, system, prompt, images=None, max_tokens=6000, response_schema=None):
         reservation = self._request_cost_ceiling(system, prompt, images, max_tokens)
         reserved = False
         content = [{"type": "text", "text": prompt}]
@@ -464,10 +464,23 @@ class VercelGatewayClient:
             mime = mimetypes.guess_type(image_path.name)[0] or "image/jpeg"
             encoded = base64.b64encode(image_path.read_bytes()).decode("ascii")
             content.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{encoded}"}})
+        response_format = {"type": "json_object"}
+        if isinstance(response_schema, dict):
+            response_format = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "vyt_structured_response",
+                    "schema": response_schema,
+                },
+            }
         payload = {
             "model": self.model,
             "temperature": 0.1,
             "max_tokens": max_tokens,
+            # The gateway exposes the OpenAI-compatible JSON mode. Keep the
+            # prompt-level instruction as well: some provider fallbacks may
+            # still return a fenced object, which _extract_json normalizes.
+            "response_format": response_format,
             "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": content},
@@ -509,7 +522,15 @@ class VercelGatewayClient:
                 except (ProviderError, KeyError, IndexError, TypeError) as error:
                     last_error = error
                     message = str(error).lower()
-                    retryable = any(token in message for token in (
+                    # A malformed/truncated model response is retryable too.
+                    # The previous code stopped after the first malformed JSON
+                    # and immediately spent the fallback review attempt. A
+                    # bounded retry gives the same model a chance to complete
+                    # the small schema before falling back to another model.
+                    format_error = any(token in message for token in (
+                        "json", "respuesta vacía", "respuesta inesperada",
+                    ))
+                    retryable = format_error or any(token in message for token in (
                         "timed out", "timeout", "temporarily", "connection reset",
                         "remote end closed", "http 429", "http 500", "http 502",
                         "http 503", "http 504",

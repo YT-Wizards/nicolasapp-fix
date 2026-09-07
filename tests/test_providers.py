@@ -231,6 +231,41 @@ class ProviderParsingTests(unittest.TestCase):
         value = _extract_json('Result follows: {"pass": true, "score": 80} trailing text')
         self.assertEqual(value, {"pass": True, "score": 80})
 
+    @patch("providers.time.sleep", return_value=None)
+    @patch("providers._json_request")
+    def test_gateway_retries_truncated_json_and_enables_json_mode(self, request, _sleep):
+        request.side_effect = [
+            {
+                "choices": [{"message": {"content": '{"pass":true'}}],
+                "usage": {"prompt_tokens": 100, "completion_tokens": 10},
+            },
+            {
+                "choices": [{"message": {"content": '{"pass":true,"score":90}'}}],
+                "usage": {"prompt_tokens": 100, "completion_tokens": 10},
+            },
+        ]
+        client = VercelGatewayClient("test-key", "google/gemini-2.5-flash")
+        self.assertEqual(client.chat_json("system", "prompt"), {"pass": True, "score": 90})
+        self.assertEqual(request.call_count, 2)
+        self.assertEqual(
+            request.call_args_list[0].kwargs["payload"]["response_format"],
+            {"type": "json_object"},
+        )
+
+    @patch("providers._json_request")
+    def test_gateway_accepts_a_structured_output_schema(self, request):
+        request.return_value = {
+            "choices": [{"message": {"content": '{"pass":true}'}}],
+            "usage": {},
+        }
+        schema = {"type": "object", "properties": {"pass": {"type": "boolean"}}}
+        client = VercelGatewayClient("test-key", "google/gemini-2.5-flash")
+        self.assertEqual(client.chat_json("system", "prompt", response_schema=schema), {"pass": True})
+        self.assertEqual(
+            request.call_args.kwargs["payload"]["response_format"]["type"],
+            "json_schema",
+        )
+
     def test_empty_reviewer_response_has_clear_error(self):
         with self.assertRaisesRegex(ProviderError, "respuesta vacía"):
             _extract_json("")
@@ -416,7 +451,7 @@ class ProviderParsingTests(unittest.TestCase):
         client = VercelGatewayClient("test-key", "google/gemini-2.5-flash")
         with self.assertRaisesRegex(ProviderError, "JSON incompleto"):
             client.chat_json("system", "prompt")
-        self.assertEqual(request.call_count, 1)
+        self.assertEqual(request.call_count, 3)
 
 
 if __name__ == "__main__":
