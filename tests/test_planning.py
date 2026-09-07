@@ -9,14 +9,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "engine"))
 
 from planning import (
     analysis_reserve_for_duration, build_schedule, editorial_types, enforce_budget, enforce_presenter_broll,
-    enforce_narration_visual_contract,
+    enforce_narration_visual_contract, enforce_phone_visual_contract,
     force_avatar_window, image_fallback_scene, make_beats,
     plan_scenes, rebalance_scenes_for_budget, review_scene_plan,
     stratified_generation_order, validate_scene_plan, visual_ratios_for_bible,
 )
 from prompts import (
     IMAGE_REVIEW_PROMPT, SCENE_BATCH_PROMPT, SCENE_PLAN_REVIEW_PROMPT,
-    VIDEO_MOTION, VIDEO_REVIEW_PROMPT, image_prompt, video_prompt,
+    VIDEO_MOTION, VIDEO_REVIEW_PROMPT, image_prompt, scene_specific_constraints, video_prompt,
 )
 from providers import ProviderError
 
@@ -188,6 +188,40 @@ class PlanningTests(unittest.TestCase):
         self.assertIn("count the visible people", review_text)
         self.assertIn("integrity_score", review_text)
         self.assertIn("natural cropping and occlusion", review_text)
+
+    def test_phone_interaction_requires_screen_to_face_the_person(self):
+        rules = scene_specific_constraints({
+            "narration": "A person checks their phone",
+            "image_prompt": "one person looking down at one phone",
+        }, "image").lower()
+        self.assertIn("phone orientation lock", rules)
+        self.assertIn("display must face the person", rules)
+        self.assertIn("back or thin edge must face the camera", rules)
+        self.assertIn("screen-facing-camera", rules)
+
+    def test_phone_interaction_never_uses_an_arbitrary_source_avatar_slice(self):
+        scenes = [{
+            "id": "b001", "type": "avatar", "requested_type": "avatar",
+            "narration": "He checks the phone and reads the warning.",
+            "literal_subject": "HeyGen source presenter",
+        }]
+        enforce_phone_visual_contract(scenes)
+        self.assertEqual(scenes[0]["type"], "image")
+        self.assertTrue(scenes[0]["phone_orientation_lock"])
+        self.assertIn("display faces the person", scenes[0]["image_prompt"])
+
+    def test_phone_review_rejects_screen_facing_viewer_while_person_looks_at_it(self):
+        review_text = " ".join((IMAGE_REVIEW_PROMPT, VIDEO_REVIEW_PROMPT)).lower()
+        self.assertIn("reject a visible phone screen facing the camera", review_text)
+        self.assertIn("reject the clip if the screen faces the camera", review_text)
+
+    def test_budget_rebalance_does_not_turn_phone_lock_back_into_avatar(self):
+        scenes = [
+            {"id": "b1", "type": "image", "phone_orientation_lock": True},
+            *[{"id": f"b{index}", "type": "image"} for index in range(2, 12)],
+        ]
+        adjusted, _ = rebalance_scenes_for_budget(scenes, available_usd=0.05, buffer=0.0)
+        self.assertEqual(adjusted[0]["type"], "image")
 
     def test_qr_window_forces_every_overlapping_beat_to_avatar(self):
         items = [

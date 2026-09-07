@@ -490,6 +490,53 @@ _TALKING_HEAD_MARKERS = re.compile(
     re.IGNORECASE,
 )
 
+_PHONE_INTERACTION = re.compile(
+    r"\b(?:phone|smartphone|telephone|teléfono|telefono|móvil|movil)\b.*\b(?:"
+    r"look(?:s|ing)?\s+(?:at|down at)|watch(?:es|ing)?|read(?:s|ing)?|check(?:s|ing)?|"
+    r"hold(?:s|ing)?|use(?:s|ing)?|turn(?:s|ing)?\s+(?:off|on))\b|"
+    r"\b(?:look(?:s|ing)?\s+(?:at|down at)|watch(?:es|ing)?|read(?:s|ing)?|check(?:s|ing)?|"
+    r"hold(?:s|ing)?|use(?:s|ing)?|turn(?:s|ing)?\s+(?:off|on))\b.*\b(?:phone|smartphone|"
+    r"telephone|teléfono|telefono|móvil|movil)\b|"
+    r"\b(?:смотрит|читает|проверяет|держит|использует|выключает|включает)\b.*\b(?:телефон|смартфон)\b",
+    re.IGNORECASE,
+)
+
+
+def enforce_phone_visual_contract(scenes):
+    """Prevent source-presenter cuts from showing a phone screen backwards.
+
+    The source HeyGen footage is not regeneratable. When a beat explicitly
+    depicts someone operating a phone, use a generated still instead of an
+    arbitrary source-avatar slice, where the screen direction can be enforced
+    and reviewed.
+    """
+    for scene in scenes or []:
+        text = _scene_text(
+            " ".join(str(scene.get(key) or "") for key in ("narration", "literal_subject", "image_prompt", "video_prompt"))
+        )
+        if not _PHONE_INTERACTION.search(text):
+            continue
+        scene["phone_orientation_lock"] = True
+        reject_if = list(scene.get("reject_if") or [])
+        if "phone screen facing the camera while the person looks at it" not in reject_if:
+            reject_if.append("phone screen facing the camera while the person looks at it")
+        scene["reject_if"] = reject_if
+        if scene.get("type") == "avatar":
+            scene["requested_type"] = scene.get("requested_type", "avatar")
+            scene["type"] = "image"
+            scene["literal_subject"] = "One person looking down at one phone; the phone display faces the person and its back faces the camera"
+            scene["image_prompt"] = (
+                "One person in a natural side or three-quarter view looking down at one phone; "
+                "the phone display faces the person and the back or thin edge faces the camera, "
+                "with no readable screen content"
+            )
+            scene["video_prompt"] = ""
+            scene["presenter_broll"] = False
+            scene["presenter_broll_reason"] = ""
+            scene["presenter_broll_value"] = 0
+            _normalize_scene(scene)
+    return scenes
+
 
 def enforce_narration_visual_contract(scenes):
     """Keep narrated people on the source presenter identity.
@@ -499,6 +546,7 @@ def enforce_narration_visual_contract(scenes):
     presenter cut, so all first-person and talking-head beats use the source
     HeyGen avatar, including phrases such as "I sat across the table".
     """
+    enforce_phone_visual_contract(scenes)
     for scene in scenes or []:
         if scene.get("type") == "avatar":
             continue
@@ -724,6 +772,9 @@ def rebalance_scenes_for_budget(scenes, available_usd, buffer=0.12, already_paid
         if scene.get("id") not in protected and scene.get("type") != "avatar"
     ]
     video_indexes = [index for index in unpaid_visuals if result[index].get("type") == "video"]
+    orientation_indexes = [
+        index for index in unpaid_visuals if result[index].get("phone_orientation_lock")
+    ]
     protected_visuals = [
         index for index, scene in enumerate(result)
         if scene.get("id") in protected and scene.get("type") != "avatar"
@@ -750,12 +801,19 @@ def rebalance_scenes_for_budget(scenes, available_usd, buffer=0.12, already_paid
     )
 
     total_keep = video_keep_count + other_keep_count
+    # A phone-direction lock is a semantic safety requirement, not an optional
+    # decorative shot. Keep these scenes as paid images instead of silently
+    # falling back to a source-avatar slice that may expose the screen to the
+    # camera. The normal $7 cap has room for these low-cost protected beats.
+    if orientation_indexes:
+        total_keep = max(total_keep, len(orientation_indexes))
     if protected_visuals:
         keep_all = _fill_distribution(
             unpaid_visuals, total_keep, anchors=set(protected_visuals), span=len(result),
         )
     else:
         keep_all = _distributed_subset(unpaid_visuals, total_keep)
+    keep_all.update(orientation_indexes)
     video_candidates_in_grid = [index for index in video_indexes if index in keep_all]
     keep_videos = _distributed_subset(
         video_candidates_in_grid,
