@@ -9,7 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "engine"))
 
 from planning import (
     analysis_reserve_for_duration, build_schedule, editorial_types, enforce_budget, enforce_presenter_broll,
-    enforce_narration_visual_contract, enforce_phone_visual_contract,
+    enforce_narration_visual_contract, enforce_phone_visual_contract, ensure_opening_avatar,
     force_avatar_window, image_fallback_scene, make_beats,
     plan_scenes, rebalance_scenes_for_budget, review_scene_plan,
     stratified_generation_order, validate_scene_plan, visual_ratios_for_bible,
@@ -214,6 +214,16 @@ class PlanningTests(unittest.TestCase):
         self.assertEqual(scenes[1]["type"], "image")
         self.assertTrue(scenes[1]["phone_orientation_lock"])
         self.assertIn("display faces the person", scenes[1]["image_prompt"])
+
+    def test_old_checkpoint_with_image_opening_is_migrated_to_avatar(self):
+        scenes = [{
+            "id": "b001", "type": "image", "requested_type": "image",
+            "literal_subject": "old checkpoint opening", "image_prompt": "old opening",
+        }, {"id": "b002", "type": "image", "image_prompt": "phone"}]
+        ensure_opening_avatar(scenes)
+        self.assertEqual(scenes[0]["type"], "avatar")
+        self.assertEqual(scenes[0]["literal_subject"], "HeyGen source presenter")
+        self.assertEqual(scenes[1]["type"], "image")
 
     def test_phone_review_rejects_screen_facing_viewer_while_person_looks_at_it(self):
         review_text = " ".join((IMAGE_REVIEW_PROMPT, VIDEO_REVIEW_PROMPT)).lower()

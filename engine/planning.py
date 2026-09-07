@@ -543,6 +543,25 @@ def enforce_phone_visual_contract(scenes):
     return scenes
 
 
+def ensure_opening_avatar(scenes):
+    """Migrate older checkpoints back to the mandatory presenter opening."""
+    if not scenes:
+        return scenes
+    first = scenes[0]
+    if first.get("type") == "avatar":
+        return scenes
+    first["requested_type"] = first.get("requested_type", first.get("type", "avatar"))
+    first["type"] = "avatar"
+    first["literal_subject"] = "HeyGen source presenter"
+    first["image_prompt"] = ""
+    first["video_prompt"] = ""
+    first["presenter_broll"] = False
+    first["presenter_broll_reason"] = ""
+    first["presenter_broll_value"] = 0
+    _normalize_scene(first)
+    return scenes
+
+
 def enforce_narration_visual_contract(scenes):
     """Keep narrated people on the source presenter identity.
 

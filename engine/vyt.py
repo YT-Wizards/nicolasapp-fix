@@ -20,7 +20,7 @@ from media import (
 )
 from planning import (
     build_schedule, build_story_bible, enforce_presenter_broll,
-    enforce_phone_visual_contract, force_avatar_window, image_fallback_scene, plan_scenes,
+    ensure_opening_avatar, enforce_phone_visual_contract, force_avatar_window, image_fallback_scene, plan_scenes,
     rebalance_scenes_for_budget, review_scene_plan, stratified_generation_order,
     validate_scene_plan,
 )
@@ -1049,6 +1049,7 @@ class Pipeline:
         # Apply deterministic physical locks even when the plan came from an
         # older checkpoint whose paid editorial review is intentionally reused.
         enforce_phone_visual_contract(scenes)
+        ensure_opening_avatar(scenes)
         planning_warnings = validate_scene_plan(scenes, duration)
         force_avatar_window(scenes, qr_window)
         # Older builds could mutate a scene to avatar/image after a temporary
