@@ -483,11 +483,6 @@ _FIRST_PERSON_AUTHORITY = re.compile(
     r"me llamo|trabajé|dirigí|me senté|me jubilé)\b",
     re.IGNORECASE,
 )
-_EXPLICIT_INTERVIEW = re.compile(
-    r"\b(?:sat across the table|across the table|interview(?:ed|ing)?|"
-    r"spoke with|talked with|met with|sat with|entrevist)\b",
-    re.IGNORECASE,
-)
 _TALKING_HEAD_MARKERS = re.compile(
     r"\b(?:talking head|speaking to camera|speaks to camera|looks into camera|"
     r"direct to camera|direct-to-camera|person speaking|man speaking|woman speaking|"
@@ -497,7 +492,13 @@ _TALKING_HEAD_MARKERS = re.compile(
 
 
 def enforce_narration_visual_contract(scenes):
-    """Remove generic generated talking heads that do not depict the beat."""
+    """Keep narrated people on the source presenter identity.
+
+    A generated interview can satisfy the words of a beat while silently
+    inventing a new person. For this product that is worse than a literal
+    presenter cut, so all first-person and talking-head beats use the source
+    HeyGen avatar, including phrases such as "I sat across the table".
+    """
     for scene in scenes or []:
         if scene.get("type") == "avatar":
             continue
@@ -506,27 +507,12 @@ def enforce_narration_visual_contract(scenes):
             " ".join(str(scene.get(key) or "") for key in ("literal_subject", "image_prompt", "video_prompt"))
         )
         first_person_authority = bool(_FIRST_PERSON_AUTHORITY.search(narration))
-        explicit_interview = bool(_EXPLICIT_INTERVIEW.search(narration))
         generic_talking_head = bool(_TALKING_HEAD_MARKERS.search(prompt))
-        if (first_person_authority and not explicit_interview) or (generic_talking_head and not explicit_interview):
+        if first_person_authority or generic_talking_head:
             scene["requested_type"] = scene.get("requested_type", scene.get("type"))
             scene["contract_fallback"] = "source_presenter_for_identity_or_talking_head"
             scene["type"] = "avatar"
             _normalize_scene(scene)
-            continue
-        if explicit_interview and scene.get("type") == "video":
-            scene["reject_if"] = list(scene.get("reject_if") or [])
-            scene["reject_if"].extend([
-                "direct-to-camera speech",
-                "a different interview subject appearing between adjacent beats",
-                "an unrelated third person",
-            ])
-            scene["reject_if"] = list(dict.fromkeys(scene["reject_if"]))
-            scene["video_prompt"] = (
-                f"{scene.get('video_prompt') or scene.get('literal_subject')}. "
-                "Two people remain the same throughout, seated across one table, "
-                "with natural side-view interaction and no one speaking directly to camera."
-            ).strip()
     return scenes
 
 

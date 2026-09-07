@@ -70,7 +70,7 @@ class PlanningTests(unittest.TestCase):
         self.assertEqual(scenes[0]["type"], "avatar")
         self.assertEqual(scenes[0]["contract_fallback"], "source_presenter_for_identity_or_talking_head")
 
-    def test_across_table_beat_keeps_interview_broll_but_locks_identity(self):
+    def test_across_table_first_person_beat_uses_source_presenter(self):
         scenes = [{
             "id": "b002", "type": "video", "requested_type": "video",
             "narration": "I sat across the table from people who got taken.",
@@ -78,9 +78,8 @@ class PlanningTests(unittest.TestCase):
             "video_prompt": "Two people talking in an interview",
         }]
         enforce_narration_visual_contract(scenes)
-        self.assertEqual(scenes[0]["type"], "video")
-        self.assertIn("a different interview subject appearing between adjacent beats", scenes[0]["reject_if"])
-        self.assertIn("remain the same throughout", scenes[0]["video_prompt"])
+        self.assertEqual(scenes[0]["type"], "avatar")
+        self.assertEqual(scenes[0]["contract_fallback"], "source_presenter_for_identity_or_talking_head")
 
     def test_scene_validation_converts_adjacent_duplicate_narration_to_free_presenter(self):
         scenes = [
