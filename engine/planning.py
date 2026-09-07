@@ -510,11 +510,16 @@ def enforce_phone_visual_contract(scenes):
     arbitrary source-avatar slice, where the screen direction can be enforced
     and reviewed.
     """
-    for scene in scenes or []:
+    for index, scene in enumerate(scenes or []):
         text = _scene_text(
             " ".join(str(scene.get(key) or "") for key in ("narration", "literal_subject", "image_prompt", "video_prompt"))
         )
         if not _PHONE_INTERACTION.search(text):
+            continue
+        # The render contract deliberately starts every production with the
+        # source HeyGen presenter. Protect later phone beats without breaking
+        # that invariant when the narration opens with “pick up your phone”.
+        if index == 0 and scene.get("type") == "avatar":
             continue
         scene["phone_orientation_lock"] = True
         reject_if = list(scene.get("reject_if") or [])

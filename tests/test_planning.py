@@ -204,11 +204,16 @@ class PlanningTests(unittest.TestCase):
             "id": "b001", "type": "avatar", "requested_type": "avatar",
             "narration": "He checks the phone and reads the warning.",
             "literal_subject": "HeyGen source presenter",
+        }, {
+            "id": "b002", "type": "avatar", "requested_type": "avatar",
+            "narration": "He checks the phone and reads the warning.",
+            "literal_subject": "HeyGen source presenter",
         }]
         enforce_phone_visual_contract(scenes)
-        self.assertEqual(scenes[0]["type"], "image")
-        self.assertTrue(scenes[0]["phone_orientation_lock"])
-        self.assertIn("display faces the person", scenes[0]["image_prompt"])
+        self.assertEqual(scenes[0]["type"], "avatar")
+        self.assertEqual(scenes[1]["type"], "image")
+        self.assertTrue(scenes[1]["phone_orientation_lock"])
+        self.assertIn("display faces the person", scenes[1]["image_prompt"])
 
     def test_phone_review_rejects_screen_facing_viewer_while_person_looks_at_it(self):
         review_text = " ".join((IMAGE_REVIEW_PROMPT, VIDEO_REVIEW_PROMPT)).lower()
