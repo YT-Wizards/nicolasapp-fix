@@ -41,12 +41,32 @@ function writeJson(file, value) {
   fs.renameSync(temp, file);
 }
 
+function historySource(item) {
+  return String(item?.source || item?.resumePayload?.source || '').trim();
+}
+
+function compactHistory(items) {
+  const seen = new Set();
+  const compacted = [];
+  for (const item of Array.isArray(items) ? items : []) {
+    // Failed/resumed attempts of one source are one logical production. Keep
+    // only the newest result instead of showing every checkpoint failure.
+    const source = historySource(item);
+    const key = source ? `${source}\u0000${Boolean(item.testMode)}` : String(item.id || '');
+    if (seen.has(key)) continue;
+    seen.add(key);
+    compacted.push(item);
+  }
+  return compacted;
+}
+
 function loadPersistentState() {
   jobStore = new JobStore(userFile('vyt.sqlite'));
   jobStore.recoverInterruptedJobs();
   state.jobs = jobStore.loadJobs();
   const saved = readJson(userFile('history.json'), { history: [] });
-  state.history = Array.isArray(saved.history) ? saved.history.slice(0, 50) : [];
+  const savedHistory = Array.isArray(saved.history) ? saved.history.slice(0, 50) : [];
+  state.history = compactHistory(savedHistory);
   // Backfill resume metadata for failed jobs written before the History
   // resume button existed. The durable SQLite job row still contains the
   // original source and settings.
@@ -67,7 +87,7 @@ function loadPersistentState() {
     };
     historyChanged = true;
   }
-  if (historyChanged) persistHistory();
+  if (historyChanged || state.history.length !== savedHistory.length) persistHistory();
   const cardsDir = userFile('product-cards');
   const referencedCards = new Set(
     state.jobs.map((job) => job.productSale?.cardPath).filter(Boolean),
@@ -82,7 +102,8 @@ function loadPersistentState() {
 }
 
 function persistHistory() {
-  writeJson(userFile('history.json'), { history: state.history.slice(0, 50) });
+  state.history = compactHistory(state.history).slice(0, 50);
+  writeJson(userFile('history.json'), { history: state.history });
 }
 
 function publicState() {
@@ -290,6 +311,7 @@ function completeJob(job, result) {
   const historyItem = {
     id: job.id,
     title: job.title,
+    source: job.source,
     testMode: Boolean(job.testMode),
     status: result.ok ? 'completed' : 'failed',
     outputPath: result.output_path || '',
