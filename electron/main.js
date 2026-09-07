@@ -697,7 +697,10 @@ function createWindow() {
   });
   mainWindow.webContents.on('unresponsive', () => runtimeLog('window-unresponsive'));
   mainWindow.webContents.on('responsive', () => runtimeLog('window-responsive'));
-  mainWindow.on('closed', () => { mainWindow = null; });
+  mainWindow.on('closed', () => {
+    runtimeLog('window-closed', { appIsQuitting });
+    mainWindow = null;
+  });
 }
 
 app.whenReady().then(async () => {
