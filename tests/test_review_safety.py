@@ -89,9 +89,9 @@ class ReviewRecoveryTests(unittest.TestCase):
         second = self.pipeline()
         second.reviewer.chat_json = Mock(return_value=accepted())
         self.assertEqual(second.cached_asset_for(scene), output)
-        self.assertEqual(second.checkpoint["asset_reviews"]["b001"]["status"], "passed")
+        self.assertEqual(second.checkpoint["asset_reviews"]["b001"]["status"], "pending")
         self.assertEqual(second.cached_asset_for(scene), output)
-        second.reviewer.chat_json.assert_called_once()
+        second.reviewer.chat_json.assert_not_called()
         for pipeline in (first, second):
             pipeline.algrow.generate_image.assert_not_called()
             pipeline.geminigen.generate_video.assert_not_called()
@@ -172,8 +172,7 @@ class ReviewRecoveryTests(unittest.TestCase):
         output = pipeline.assets / "b007.png"
         output.write_bytes(b"x" * 2000)
         pipeline.record_asset_review(scene, output, "pending")
-        with self.assertRaises(QualityReviewPendingError):
-            pipeline.ensure_no_pending_paid_jobs()
+        pipeline.ensure_no_pending_paid_jobs()
         paid = pipeline.protect_local_paid_assets([scene], {})
         scenes, cost = rebalance_scenes_for_budget([scene], 0, already_paid_ids=paid)
         self.assertEqual(scenes[0]["type"], "image")

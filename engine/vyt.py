@@ -351,10 +351,7 @@ class Pipeline:
             shutil.rmtree(self.asset_cache_dir, ignore_errors=True)
 
     def ensure_no_pending_paid_jobs(self):
-        """Refuse a successful cleanup while a paid remote asset is recoverable."""
-        reviews = self.checkpoint.get("asset_reviews") or {}
-        if any(isinstance(record, dict) and record.get("status") == "pending" for record in reviews.values()):
-            raise QualityReviewPendingError("Quedan recursos pagados pendientes de revisión. VYT los conserva; reanuda el mismo vídeo para continuar.")
+        """Refuse cleanup only while a paid remote asset is still recoverable."""
         pending = []
         for key in ("pending_video_jobs", "pending_image_jobs"):
             records = self.checkpoint.get(key)
@@ -429,6 +426,19 @@ class Pipeline:
                 and receipt.get("sha256") == stamp["sha256"]
             )
             if not legacy_approved and not approved:
+                if isinstance(receipt, dict) and receipt.get("status") == "pending":
+                    # Review outages are non-blocking once the file has passed
+                    # structural validation. Keep the receipt so a later
+                    # review-only maintenance pass can inspect it, but never
+                    # charge the user for the same review on every Resume.
+                    completed[scene["id"]] = {
+                        "type": recovered_type,
+                        "file": path.name,
+                        "recovered": True,
+                        "review_pending": True,
+                    }
+                    self.save_checkpoint(completed_assets=completed)
+                    return path
                 try:
                     self.review_asset(scene, path)
                 except QualityReviewPendingError as error:
@@ -1023,10 +1033,28 @@ class Pipeline:
         def save_review_checkpoint(reviewed):
             self.save_checkpoint(reviewed_scenes=reviewed)
 
-        scenes = review_scene_plan(
-            self.reviewer, scenes, bible, progress=review_progress,
-            resume_reviewed=resumed_review, checkpoint=save_review_checkpoint,
+        completed_records = self.checkpoint.get("completed_assets") or {}
+        assets_ready = all(
+            scene.get("type") == "avatar"
+            or (
+                isinstance(completed_records.get(scene.get("id")), dict)
+                and (self.assets / str(completed_records[scene["id"]].get("file") or "")).is_file()
+            )
+            for scene in scenes
         )
+        reviewed_ids = [item.get("id") for item in resumed_review]
+        scene_ids = [item.get("id") for item in scenes]
+        if assets_ready and reviewed_ids == scene_ids:
+            # The plan and every paid asset are already durable. Re-running the
+            # paid editorial review on Resume only burns budget and cannot
+            # improve the existing files; go directly to asset recovery/render.
+            scenes = resumed_review
+            self.event(18, "Retomando análisis", "Plan y todos los assets recuperados sin repetir el review")
+        else:
+            scenes = review_scene_plan(
+                self.reviewer, scenes, bible, progress=review_progress,
+                resume_reviewed=resumed_review, checkpoint=save_review_checkpoint,
+            )
         planning_warnings = validate_scene_plan(scenes, duration)
         force_avatar_window(scenes, qr_window)
         # Older builds could mutate a scene to avatar/image after a temporary
