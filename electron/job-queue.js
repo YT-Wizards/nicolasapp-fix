@@ -8,7 +8,7 @@ function createdAtValue(job, index) {
  * The adapter owns process creation; this module only enforces FIFO and the
  * concurrency invariant at the queue seam.
  */
-function selectRunnableJobs(jobs, runningIds = [], maxRunning = 2) {
+function selectRunnableJobs(jobs, runningIds = [], maxRunning = Number.POSITIVE_INFINITY) {
   const running = new Set(runningIds || []);
   const slots = Math.max(0, Number(maxRunning || 0) - running.size);
   if (!slots) return [];

@@ -7,7 +7,7 @@ the assets and renders a final 1080p export.
 
 ## What is included
 
-- Electron desktop interface and local job queue (up to two active jobs).
+- Electron desktop interface and local durable job queue with no global active-job cap.
 - Python planning, provider, quality-review and FFmpeg rendering pipeline.
 - Checkpoint and paid-asset recovery logic.
 - Optional presenter, split-screen, branding and QR-card placement.

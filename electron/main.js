@@ -8,7 +8,10 @@ const { isFullVideoDurationAllowed } = require('./duration');
 const { JobStore } = require('./job-store');
 const { selectRunnableJobs } = require('./job-queue');
 
-const MAX_RUNNING = 2;
+// Jobs are durable and provider requests have their own bounded concurrency.
+// Keep the desktop queue open so users can run any number of video jobs; the
+// queue still prevents duplicate claims for jobs already attached to a child.
+const MAX_RUNNING = Number.POSITIVE_INFINITY;
 const FULL_MAX_COST_USD = 7.0;
 const TEST_MAX_COST_USD = 1.5;
 const state = { jobs: [], history: [] };

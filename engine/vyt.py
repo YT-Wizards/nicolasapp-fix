@@ -1202,7 +1202,8 @@ class Pipeline:
         remaining = stratified_generation_order(
             [scene for scene in pending if scene["id"] not in gate_attempted]
         )
-        # Keep provider pressure controlled. Two VYT jobs can run simultaneously, so each uses only four workers.
+        # Each job uses four local workers. Paid provider submissions remain
+        # bounded by ProviderRequestGate, while polling can continue in parallel.
         executor = ThreadPoolExecutor(max_workers=4)
         completed_pool = False
         futures = {}

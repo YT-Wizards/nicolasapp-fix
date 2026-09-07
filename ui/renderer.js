@@ -29,7 +29,7 @@ function applyLanguage(language) {
   const browse = $('#browseButton'); if (browse) browse.textContent = english ? 'Select' : 'Seleccionar';
   const toggles = $$('.toggle-row'); if (toggles[0]) { toggles[0].querySelector('strong').textContent = english ? 'Allow real brands' : 'Permitir marcas reales'; toggles[0].querySelector('small').textContent = english ? 'Only when the narration explicitly mentions a brand or product.' : 'Solo si la narración menciona expresamente una marca o producto.'; } if (toggles[1]) { toggles[1].querySelector('strong').textContent = english ? 'Add sales QR' : 'Añadir QR de venta'; toggles[1].querySelector('small').textContent = english ? 'A brief Bertha-style card, only during the product call to action.' : 'Tarjeta breve como Bertha, solo durante la llamada a la acción del producto.'; }
   const mix = document.querySelector('.mix-head span:first-child'); if (mix) mix.textContent = english ? 'Adaptive FaceTuber mix' : 'Mezcla FaceTuber adaptativa';
-  const limit = document.querySelector('.limit-note'); if (limit) limit.textContent = english ? 'Full videos of 8–35 min · limit: $7.00 per video · 90-second test: $1.50 · maximum two at a time · 1080p output' : 'Vídeos completos de 8–35 min · límite: 7,00 $ por vídeo · prueba de 90 s: 1,50 $ · máximo dos a la vez · salida 1080p';
+  const limit = document.querySelector('.limit-note'); if (limit) limit.textContent = english ? 'Full videos of 8–35 min · limit: $7.00 per video · 90-second test: $1.50 · no job limit · 1080p output' : 'Vídeos completos de 8–35 min · límite: 7,00 $ por vídeo · prueba de 90 s: 1,50 $ · sin límite de jobs · salida 1080p';
   set('.panel-title span:first-child', 'production'); set('#jobsEmpty strong', 'progress'); set('#jobsEmpty p', 'progressHelp');
   set('#historyView .eyebrow', 'results'); set('#historyView h2', 'simpleHistory'); set('#historyView .history-head p', 'historyHelp'); set('#channelsView .eyebrow', 'personal'); set('#channelsView h2', 'channels'); set('#channelsView .channels-head p', 'channelHelp');
   const search = $('#channelSearch'); if (search) search.placeholder = t('search'); set('#toggleChannelEmails', showChannelEmails ? 'hideEmails' : 'showEmails'); set('#importChannelsButton', 'import'); set('#newChannelButton', 'newChannel');
@@ -161,7 +161,7 @@ async function submit(testMode) {
 
 function renderJobs() {
   const active = appState.jobs.filter((j) => !['completed', 'failed', 'cancelled'].includes(j.status));
-  $('#capacityLabel').textContent = currentLanguage === 'en' ? `${active.filter((j) => j.status === 'running').length} of 2 active` : `${active.filter((j) => j.status === 'running').length} de 2 activas`;
+  $('#capacityLabel').textContent = currentLanguage === 'en' ? `${active.filter((j) => j.status === 'running').length} active` : `${active.filter((j) => j.status === 'running').length} activas`;
   $('#jobsEmpty').style.display = active.length ? 'none' : 'flex';
   $('#jobsList').innerHTML = active.map((job) => `
     <article class="job-card">

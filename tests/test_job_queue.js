@@ -27,3 +27,13 @@ test('does not select a queued job already claimed by a process', () => {
     ['next'],
   );
 });
+
+test('selects all queued jobs when no global cap is supplied', () => {
+  const jobs = [
+    { id: 'one', status: 'queued', createdAt: '2026-09-06T10:00:00.000Z' },
+    { id: 'two', status: 'queued', createdAt: '2026-09-06T10:01:00.000Z' },
+    { id: 'three', status: 'queued', createdAt: '2026-09-06T10:02:00.000Z' },
+  ];
+
+  assert.deepEqual(selectRunnableJobs(jobs).map((job) => job.id), ['one', 'two', 'three']);
+});
