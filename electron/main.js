@@ -53,14 +53,14 @@ function compactHistory(items) {
   const compacted = [];
   for (const item of Array.isArray(items) ? items : []) {
     // Completed exports are immutable results and must all remain visible,
-    // including completed 90-second tests. Only unfinished test attempts of
-    // one source are collapsed to the newest checkpoint failure.
-    if (item?.status === 'completed' || !item?.testMode) {
+    // including completed 90-second tests. Unfinished attempts of one source
+    // are collapsed to the newest checkpoint, for both test and full modes.
+    if (item?.status === 'completed') {
       compacted.push(item);
       continue;
     }
     const source = historySource(item);
-    const key = source ? `${source}\u0000test-incomplete` : String(item.id || '');
+    const key = source ? `${source}\u0000incomplete` : String(item.id || '');
     if (seen.has(key)) continue;
     seen.add(key);
     compacted.push(item);
