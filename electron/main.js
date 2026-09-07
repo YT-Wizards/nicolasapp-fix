@@ -49,10 +49,15 @@ function compactHistory(items) {
   const seen = new Set();
   const compacted = [];
   for (const item of Array.isArray(items) ? items : []) {
-    // Failed/resumed attempts of one source are one logical production. Keep
-    // only the newest result instead of showing every checkpoint failure.
+    // Completed exports are immutable results and must all remain visible,
+    // including completed 90-second tests. Only unfinished test attempts of
+    // one source are collapsed to the newest checkpoint failure.
+    if (item?.status === 'completed' || !item?.testMode) {
+      compacted.push(item);
+      continue;
+    }
     const source = historySource(item);
-    const key = source ? `${source}\u0000${Boolean(item.testMode)}` : String(item.id || '');
+    const key = source ? `${source}\u0000test-incomplete` : String(item.id || '');
     if (seen.has(key)) continue;
     seen.add(key);
     compacted.push(item);
