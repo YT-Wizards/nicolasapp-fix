@@ -1007,8 +1007,10 @@ class Pipeline:
         cached_scene_ids = [scene.get("id") for scene in cached_scenes] if isinstance(cached_scenes, list) else []
         cached_scene_types = [scene.get("type") for scene in cached_scenes] if isinstance(cached_scenes, list) else []
         expected_types = [beat.get("type") for beat in beats]
-        if cached_scene_ids == expected_ids and cached_scene_types == expected_types:
+        reused_cached_plan = False
+        if cached_scene_ids == expected_ids:
             scenes = cached_scenes
+            reused_cached_plan = True
             self.event(18, "Retomando análisis", "Plan visual recuperado sin volver a pagarlo")
         else:
             resume_planned = cached_scenes if cached_scene_ids == expected_ids[:len(cached_scene_ids)] else []
@@ -1033,23 +1035,12 @@ class Pipeline:
         def save_review_checkpoint(reviewed):
             self.save_checkpoint(reviewed_scenes=reviewed)
 
-        completed_records = self.checkpoint.get("completed_assets") or {}
-        assets_ready = all(
-            scene.get("type") == "avatar"
-            or (
-                isinstance(completed_records.get(scene.get("id")), dict)
-                and (self.assets / str(completed_records[scene["id"]].get("file") or "")).is_file()
-            )
-            for scene in scenes
-        )
-        reviewed_ids = [item.get("id") for item in resumed_review]
-        scene_ids = [item.get("id") for item in scenes]
-        if assets_ready and reviewed_ids == scene_ids:
-            # The plan and every paid asset are already durable. Re-running the
-            # paid editorial review on Resume only burns budget and cannot
-            # improve the existing files; go directly to asset recovery/render.
-            scenes = resumed_review
-            self.event(18, "Retomando análisis", "Plan y todos los assets recuperados sin repetir el review")
+        if reused_cached_plan:
+            # A cached plan is already the durable contract for the assets that
+            # were bought from it. Re-running the paid editorial review can burn
+            # the remaining budget and prevent the render; missing beats will be
+            # handled by the normal media fallback below.
+            self.event(18, "Retomando análisis", "Plan recuperado sin repetir el review pagado")
         else:
             scenes = review_scene_plan(
                 self.reviewer, scenes, bible, progress=review_progress,
