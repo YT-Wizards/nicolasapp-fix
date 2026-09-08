@@ -58,6 +58,25 @@ class BudgetExhaustedError(ProviderError):
     """The per-video cap rejected a new purchase before it reached a provider."""
 
 
+def asset_contract_signature(scene):
+    """Return a stable signature for the scene's actual visual contract.
+
+    Resume is intentionally keyed to scene semantics, not to a particular
+    script or scene number. A changed prompt, media type, rejection rule or
+    deterministic lock must never silently reuse an incompatible asset.
+    """
+    payload = {
+        key: scene.get(key)
+        for key in (
+            "type", "literal_subject", "image_prompt", "video_prompt",
+            "reject_if", "continuity_ids", "named_brand",
+            "phone_orientation_lock", "interaction_orientation_lock",
+            "contract_fallback",
+        )
+    }
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
+
+
 def handle_stop(_signum, _frame):
     stop_requested.set()
 
@@ -388,14 +407,29 @@ class Pipeline:
                 completed = {}
             indexed_record = completed.get(scene["id"])
             if (
-                scene.get("interaction_orientation_lock")
-                and isinstance(indexed_record, dict)
-                and indexed_record.get("contract_version") != VISUAL_CONTRACT_VERSION
+                isinstance(indexed_record, dict)
+                and indexed_record.get("contract_signature")
+                and indexed_record.get("contract_signature") != asset_contract_signature(scene)
             ):
                 # This asset was produced before the deterministic interaction
                 # contract existed. Do not silently reuse a potentially wrong
                 # person/object orientation; unrelated completed assets remain
                 # fully resumable.
+                stale_file = indexed_record.get("file")
+                if stale_file:
+                    (self.assets / str(stale_file)).unlink(missing_ok=True)
+                completed.pop(scene["id"], None)
+                reviews = self.checkpoint.get("asset_reviews") or {}
+                reviews.pop(scene["id"], None)
+                self.save_checkpoint(completed_assets=completed, asset_reviews=reviews)
+                return None
+            if (
+                isinstance(indexed_record, dict)
+                and not indexed_record.get("contract_signature")
+                and (scene.get("interaction_orientation_lock") or scene.get("phone_orientation_lock"))
+            ):
+                # Legacy interaction assets have no semantic signature and are
+                # the only old assets unsafe to trust after the new contract.
                 stale_file = indexed_record.get("file")
                 if stale_file:
                     (self.assets / str(stale_file)).unlink(missing_ok=True)
@@ -573,6 +607,7 @@ class Pipeline:
                 "type": scene["type"],
                 "file": Path(asset).name,
                 "contract_version": VISUAL_CONTRACT_VERSION,
+                "contract_signature": asset_contract_signature(scene),
             }
             self.save_checkpoint(completed_assets=completed)
 
