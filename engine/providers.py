@@ -156,6 +156,14 @@ class PaidAssetRecoveryError(ProviderError):
     pass
 
 
+class PaidAssetWaitingError(PaidAssetRecoveryError):
+    """A paid asset is still recoverable and should be retried automatically."""
+
+    def __init__(self, message, retry_after=300.0):
+        super().__init__(message)
+        self.retry_after = max(30.0, float(retry_after or 300.0))
+
+
 _R2_ROUTE_LOCK = threading.Lock()
 _R2_DIRECT_UNREACHABLE = set()
 _R2_EDGE_IPS = []
@@ -664,7 +672,7 @@ class AlgrowClient:
                         if time.monotonic() >= deadline:
                             break
                     _sleep_before(deadline, min(20, 3 + attempt * 3))
-                raise PaidAssetRecoveryError(
+                raise PaidAssetWaitingError(
                     "Algrow terminó la imagen pagada, pero su archivo todavía no pudo descargarse: "
                     f"{_safe_provider_reason(last_download_error)}"
                 ) from last_download_error
@@ -676,12 +684,14 @@ class AlgrowClient:
                 raise RegeneratableError(status.get("error") or status.get("message") or "La imagen falló en Algrow.")
             _sleep_before(deadline, 5)
         if last_poll_error is not None:
-            raise PaidAssetRecoveryError(
+            raise PaidAssetWaitingError(
                 "Algrow no pudo recuperar el trabajo pagado: "
-                f"{_safe_provider_reason(last_poll_error)}"
+                f"{_safe_provider_reason(last_poll_error)}",
+                retry_after=300,
             ) from last_poll_error
-        raise PaidAssetRecoveryError(
-            "Algrow mantiene la imagen pagada pendiente de entrega y superó el tiempo máximo."
+        raise PaidAssetWaitingError(
+            "Algrow mantiene la imagen pagada pendiente de entrega; VYT la conservará y reintentará automáticamente.",
+            retry_after=300,
         )
 
 

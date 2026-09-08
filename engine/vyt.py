@@ -28,7 +28,7 @@ from planning import (
 from prompts import IMAGE_REVIEW_PROMPT, PLANNER_SYSTEM, VIDEO_REVIEW_PROMPT, image_prompt, video_prompt
 from providers import (
     AlgrowClient, GeminiGenClient, VercelGatewayClient,
-    PaidAssetRecoveryError, ProviderError, ProviderTemporarilyUnavailableError,
+    PaidAssetRecoveryError, PaidAssetWaitingError, ProviderError, ProviderTemporarilyUnavailableError,
     RegeneratableError,
 )
 from operations import OperationLedger, OperationRecoveryRequired
@@ -1504,7 +1504,7 @@ def main():
             "cost_breakdown": pipeline.cost_breakdown() if pipeline else {},
             "failures": pipeline.failures[-8:] if pipeline else [],
         }
-    except ProviderTemporarilyUnavailableError as error:
+    except (ProviderTemporarilyUnavailableError, PaidAssetWaitingError) as error:
         result = {
             "ok": False, "retryable": True, "error": str(error),
             "retry_after_seconds": getattr(error, "retry_after", 30),
