@@ -41,6 +41,7 @@ stop_requested = threading.Event()
 ANALYSIS_CACHE_VERSION = "2026-08-28-budget-distribution-v6"
 VISUAL_CONTRACT_VERSION = "2026-09-08-interaction-v1"
 IMAGE_OPERATION_TIMEOUT = 10 * 60
+PAID_IMAGE_RECOVERY_TIMEOUT = 30 * 60
 VIDEO_OPERATION_TIMEOUT = 25 * 60
 AI_OPERATION_TIMEOUT = 4 * 60
 VEO_MODEL_CASCADE = ("veo-3.1-fast", "veo-3.1-lite")
@@ -784,7 +785,9 @@ class Pipeline:
                 output, _remote_url = self.algrow.generate_image(
                     prompt,
                     output,
-                    timeout=self.remaining_time(IMAGE_OPERATION_TIMEOUT),
+                    timeout=self.remaining_time(
+                        PAID_IMAGE_RECOVERY_TIMEOUT if resume_job_id else IMAGE_OPERATION_TIMEOUT
+                    ),
                     resume_job_id=resume_job_id,
                     on_created=lambda job_id: (
                         self.operation_ledger.mark_submitted(operation_key, job_id),

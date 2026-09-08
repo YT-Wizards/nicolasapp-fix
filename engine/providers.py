@@ -614,7 +614,12 @@ class AlgrowClient:
                 status = _json_request(
                     f"https://api.algrow.online/api/job-status/{urllib.parse.quote(job_id)}",
                     headers=self.headers,
-                    timeout=_remaining_timeout(deadline, 45),
+                    # A paid recovery must tolerate a slow TLS handshake or a
+                    # temporarily cold Algrow edge. The outer deadline still
+                    # controls the total recovery window, while this larger
+                    # per-request timeout avoids aborting healthy jobs during
+                    # a short network stall.
+                    timeout=_remaining_timeout(deadline, 90),
                 )
                 poll_errors = 0
                 last_poll_error = None
