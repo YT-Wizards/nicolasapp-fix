@@ -218,8 +218,10 @@ function renderHistory() {
   $$('[data-resume]').forEach((button) => button.onclick = async () => {
     try {
       button.disabled = true;
-      await window.vyt.resumeJob(button.dataset.resume);
-      showToast(currentLanguage === 'en' ? 'Resume queued from checkpoint' : 'Continuación puesta en cola desde el checkpoint');
+      const result = await window.vyt.resumeJob(button.dataset.resume);
+      showToast(result?.alreadyRunning
+        ? (currentLanguage === 'en' ? 'This video is already in production' : 'Este vídeo ya está en producción')
+        : (currentLanguage === 'en' ? 'Resume queued from checkpoint' : 'Continuación puesta en cola desde el checkpoint'));
       $('[data-view="create"]')?.click();
     } catch (error) {
       button.disabled = false;

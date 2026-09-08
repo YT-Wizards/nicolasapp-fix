@@ -793,6 +793,12 @@ ipcMain.handle('resume-job', (_event, historyId) => {
   const item = state.history.find((entry) => entry.id === String(historyId || ''));
   if (!item?.resumable || !item.resumePayload) throw new Error('Это видео нельзя возобновить из сохранённого checkpoint.');
   if (!fs.existsSync(item.resumePayload.source)) throw new Error('Исходный файл больше не найден по сохранённому пути.');
+  const sourceIdentity = path.resolve(item.resumePayload.source).toLocaleLowerCase();
+  const active = state.jobs.find((job) =>
+    ['queued', 'running', 'waiting_for_provider', 'waiting_for_download'].includes(job.status)
+      && path.resolve(String(job.source || '')).toLocaleLowerCase() === sourceIdentity
+  );
+  if (active) return { alreadyRunning: true, jobId: active.id, status: active.status };
   return createJob({
     title: item.title,
     source: item.resumePayload.source,
