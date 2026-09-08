@@ -486,6 +486,8 @@ _FIRST_PERSON_AUTHORITY = re.compile(
 _TALKING_HEAD_MARKERS = re.compile(
     r"\b(?:talking head|speaking to camera|speaks to camera|looks into camera|"
     r"direct to camera|direct-to-camera|person speaking|man speaking|woman speaking|"
+    r"person talking|man talking|woman talking|talks to camera|talking directly to camera|"
+    r"addresses the camera|addresses camera|explains to camera|explains directly to camera|"
     r"interview subject|portrait interview)\b",
     re.IGNORECASE,
 )
@@ -600,15 +602,18 @@ def enforce_phone_visual_contract(scenes):
         reject_if = list(scene.get("reject_if") or [])
         if "phone screen facing the camera while the person looks at it" not in reject_if:
             reject_if.append("phone screen facing the camera while the person looks at it")
+        if "phone display facing the camera head-on unless showing it is explicitly narrated" not in reject_if:
+            reject_if.append("phone display facing the camera head-on unless showing it is explicitly narrated")
         scene["reject_if"] = reject_if
         if scene.get("type") == "avatar":
             scene["requested_type"] = scene.get("requested_type", "avatar")
             scene["type"] = "image"
             scene["literal_subject"] = "One person looking down at one phone; the phone display faces the person and may be visible to the camera from an oblique angle"
             scene["image_prompt"] = (
-                "One person in a natural side or three-quarter view looking down at one phone; "
-                "the phone display faces the person while the camera may see the display from a natural oblique angle; "
-                "the person's gaze and body are directed at the device, with no invented readable screen content"
+                "One person in a natural side, over-the-shoulder or three-quarter view looking down at one phone; "
+                "the phone display faces the person and must not face the camera head-on; keep the screen turned away, "
+                "edge-on or visible only from a natural oblique angle; the person's gaze and body are directed at the device, "
+                "with no invented readable screen content and no screen-showing pose"
             )
             scene["video_prompt"] = ""
             scene["presenter_broll"] = False

@@ -197,8 +197,18 @@ class PlanningTests(unittest.TestCase):
         }, "image").lower()
         self.assertIn("phone orientation lock", rules)
         self.assertIn("display must face the person", rules)
-        self.assertIn("camera may see the display", rules)
-        self.assertIn("looks into the camera", rules)
+        self.assertIn("must not face the camera head-on", rules)
+        self.assertIn("over-the-shoulder", rules)
+
+    def test_generic_talking_head_is_replaced_by_source_presenter(self):
+        scenes = [{
+            "id": "b001", "type": "image", "requested_type": "image",
+            "narration": "A warning is discussed.",
+            "image_prompt": "A man talking directly to camera in a kitchen",
+        }]
+        enforce_narration_visual_contract(scenes)
+        self.assertEqual(scenes[0]["type"], "avatar")
+        self.assertEqual(scenes[0]["contract_fallback"], "source_presenter_for_identity_or_talking_head")
 
     def test_phone_interaction_never_uses_an_arbitrary_source_avatar_slice(self):
         scenes = [{
@@ -243,8 +253,8 @@ class PlanningTests(unittest.TestCase):
 
     def test_phone_review_rejects_screen_facing_viewer_while_person_looks_at_it(self):
         review_text = " ".join((IMAGE_REVIEW_PROMPT, VIDEO_REVIEW_PROMPT)).lower()
-        self.assertIn("do not reject a visible screen by itself", review_text)
-        self.assertIn("looks into the camera", review_text)
+        self.assertIn("must not face the camera head-on", review_text)
+        self.assertIn("frontal screen-first", review_text)
 
     def test_object_interaction_contract_is_not_phone_specific(self):
         scenes = [{
