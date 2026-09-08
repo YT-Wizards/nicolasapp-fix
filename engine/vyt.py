@@ -20,7 +20,8 @@ from media import (
 )
 from planning import (
     build_schedule, build_story_bible, enforce_presenter_broll,
-    ensure_opening_avatar, enforce_phone_visual_contract, force_avatar_window, image_fallback_scene, plan_scenes,
+    ensure_opening_avatar, enforce_object_interaction_visual_contract, enforce_phone_visual_contract,
+    force_avatar_window, image_fallback_scene, plan_scenes,
     rebalance_scenes_for_budget, review_scene_plan, stratified_generation_order,
     validate_scene_plan,
 )
@@ -34,7 +35,9 @@ from operations import OperationLedger, OperationRecoveryRequired
 
 
 stop_requested = threading.Event()
-ANALYSIS_CACHE_VERSION = "2026-08-28-budget-distribution-v6"
+# Bump when deterministic visual contracts change. This prevents a new
+# generation from silently reusing assets planned under weaker scene rules.
+ANALYSIS_CACHE_VERSION = "2026-09-08-visual-contracts-v7"
 IMAGE_OPERATION_TIMEOUT = 10 * 60
 VIDEO_OPERATION_TIMEOUT = 25 * 60
 AI_OPERATION_TIMEOUT = 4 * 60
@@ -1048,6 +1051,7 @@ class Pipeline:
             )
         # Apply deterministic physical locks even when the plan came from an
         # older checkpoint whose paid editorial review is intentionally reused.
+        enforce_object_interaction_visual_contract(scenes)
         enforce_phone_visual_contract(scenes)
         ensure_opening_avatar(scenes)
         planning_warnings = validate_scene_plan(scenes, duration)
