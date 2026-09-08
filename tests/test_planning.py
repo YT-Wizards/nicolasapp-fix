@@ -215,6 +215,21 @@ class PlanningTests(unittest.TestCase):
         self.assertTrue(scenes[1]["phone_orientation_lock"])
         self.assertIn("display faces the person", scenes[1]["image_prompt"])
 
+    def test_phone_action_with_words_between_phone_and_action_is_detected(self):
+        scenes = [{
+            "id": "b001", "type": "avatar", "requested_type": "avatar",
+            "narration": "Try turning your phone off and back on.",
+            "literal_subject": "HeyGen source presenter",
+        }, {
+            "id": "b002", "type": "avatar", "requested_type": "avatar",
+            "narration": "Try turning your phone off and back on.",
+            "literal_subject": "HeyGen source presenter",
+        }]
+        enforce_phone_visual_contract(scenes)
+        self.assertEqual(scenes[0]["type"], "avatar")
+        self.assertEqual(scenes[1]["type"], "image")
+        self.assertIn("person's gaze and body are directed at the device", scenes[1]["image_prompt"])
+
     def test_old_checkpoint_with_image_opening_is_migrated_to_avatar(self):
         scenes = [{
             "id": "b001", "type": "image", "requested_type": "image",

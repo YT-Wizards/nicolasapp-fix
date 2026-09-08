@@ -490,14 +490,15 @@ _TALKING_HEAD_MARKERS = re.compile(
     re.IGNORECASE,
 )
 
-_PHONE_INTERACTION = re.compile(
-    r"\b(?:phone|smartphone|telephone|teléfono|telefono|móvil|movil)\b.*\b(?:"
-    r"look(?:s|ing)?\s+(?:at|down at)|watch(?:es|ing)?|read(?:s|ing)?|check(?:s|ing)?|"
-    r"hold(?:s|ing)?|use(?:s|ing)?|turn(?:s|ing)?\s+(?:off|on))\b|"
-    r"\b(?:look(?:s|ing)?\s+(?:at|down at)|watch(?:es|ing)?|read(?:s|ing)?|check(?:s|ing)?|"
-    r"hold(?:s|ing)?|use(?:s|ing)?|turn(?:s|ing)?\s+(?:off|on))\b.*\b(?:phone|smartphone|"
-    r"telephone|teléfono|telefono|móvil|movil)\b|"
-    r"\b(?:смотрит|читает|проверяет|держит|использует|выключает|включает)\b.*\b(?:телефон|смартфон)\b",
+_PHONE_WORD = re.compile(
+    r"\b(?:phone|smartphone|telephone|teléfono|telefono|móvil|movil)\b|"
+    r"\b(?:телефон|смартфон)\b",
+    re.IGNORECASE,
+)
+_PHONE_ACTION = re.compile(
+    r"\b(?:look(?:s|ing)?|watch(?:es|ing)?|read(?:s|ing)?|check(?:s|ing)?|"
+    r"hold(?:s|ing)?|use(?:s|ing)?|turn(?:s|ing)?|смотрит|читает|проверяет|"
+    r"держит|использует|выключает|включает)\b",
     re.IGNORECASE,
 )
 
@@ -514,7 +515,7 @@ def enforce_phone_visual_contract(scenes):
         text = _scene_text(
             " ".join(str(scene.get(key) or "") for key in ("narration", "literal_subject", "image_prompt", "video_prompt"))
         )
-        if not _PHONE_INTERACTION.search(text):
+        if not (_PHONE_WORD.search(text) and _PHONE_ACTION.search(text)):
             continue
         # The render contract deliberately starts every production with the
         # source HeyGen presenter. Protect later phone beats without breaking
