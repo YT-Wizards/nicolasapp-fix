@@ -9,7 +9,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "engine"))
 
 from planning import (
     analysis_reserve_for_duration, build_schedule, editorial_types, enforce_budget, enforce_presenter_broll,
-    enforce_narration_visual_contract, enforce_phone_visual_contract, ensure_opening_avatar,
+    enforce_narration_visual_contract, enforce_object_interaction_visual_contract,
+    enforce_phone_visual_contract, ensure_opening_avatar,
     force_avatar_window, image_fallback_scene, make_beats,
     plan_scenes, rebalance_scenes_for_budget, review_scene_plan,
     stratified_generation_order, validate_scene_plan, visual_ratios_for_bible,
@@ -244,6 +245,22 @@ class PlanningTests(unittest.TestCase):
         review_text = " ".join((IMAGE_REVIEW_PROMPT, VIDEO_REVIEW_PROMPT)).lower()
         self.assertIn("do not reject a visible screen by itself", review_text)
         self.assertIn("looks into the camera", review_text)
+
+    def test_object_interaction_contract_is_not_phone_specific(self):
+        scenes = [{
+            "id": "b001", "type": "avatar", "requested_type": "avatar",
+            "narration": "The presenter opens a notebook and writes one note.",
+            "literal_subject": "HeyGen source presenter",
+        }, {
+            "id": "b002", "type": "avatar", "requested_type": "avatar",
+            "narration": "The presenter opens a notebook and writes one note.",
+            "literal_subject": "HeyGen source presenter",
+        }]
+        enforce_object_interaction_visual_contract(scenes)
+        self.assertEqual(scenes[0]["type"], "avatar")
+        self.assertEqual(scenes[1]["type"], "image")
+        self.assertTrue(scenes[1]["interaction_orientation_lock"])
+        self.assertIn("gaze, hands and body are oriented", scenes[1]["image_prompt"])
 
     def test_budget_rebalance_does_not_turn_phone_lock_back_into_avatar(self):
         scenes = [

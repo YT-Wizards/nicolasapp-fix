@@ -502,6 +502,80 @@ _PHONE_ACTION = re.compile(
     re.IGNORECASE,
 )
 
+# The source presenter can speak naturally, but an arbitrary source slice
+# cannot reliably perform a concrete prop interaction. Keep this vocabulary
+# deliberately semantic and reusable across scripts; the phone rule below adds
+# the stricter display-facing constraint for one important device class.
+_INTERACTION_OBJECT = re.compile(
+    r"\b(?:phone|smartphone|telephone|teléfono|telefono|móvil|movil|tablet|"
+    r"laptop|computer|keyboard|screen|remote|controller|headphones|earbuds|"
+    r"book|notebook|document|paper|papers|tool|hammer|screwdriver|bottle|"
+    r"cup|mug|box|bag|keys|key|ball|телефон|смартфон|планшет|ноутбук|"
+    r"компьютер|клавиатура|экран|пульт|наушники|книга|документ|бумага|"
+    r"инструмент|молоток|отвёртка|отвертка|бутылка|чашка|коробка|сумка|"
+    r"ключ|мяч)\b",
+    re.IGNORECASE,
+)
+_INTERACTION_ACTION = re.compile(
+    r"\b(?:look(?:s|ing)?|watch(?:es|ing)?|read(?:s|ing)?|check(?:s|ing)?|"
+    r"hold(?:s|ing)?|use(?:s|ing)?|pick(?:s|ing)?|open(?:s|ing)?|close(?:s|ing)?|"
+    r"press(?:es|ing)?|type(?:s|ing)?|write(?:s|ing)?|carry(?:s|ing)?|"
+    r"drink(?:s|ing)?|grab(?:s|bing)?|turn(?:s|ing)?|смотрит|читает|проверяет|"
+    r"держит|использует|берёт|берет|открывает|закрывает|нажимает|печатает|"
+    r"пишет|несёт|несет|пьёт|пьет|берет|поворачивает)\b",
+    re.IGNORECASE,
+)
+
+
+def _scene_content(scene):
+    return _scene_text(
+        " ".join(
+            str(scene.get(key) or "")
+            for key in ("narration", "literal_subject", "image_prompt", "video_prompt")
+        )
+    )
+
+
+def enforce_object_interaction_visual_contract(scenes):
+    """Prevent arbitrary presenter slices from depicting prop interactions.
+
+    This is intentionally broader than the phone-specific rule: it protects
+    any clearly narrated object interaction while leaving the mandatory
+    opening presenter and already-generated video/image scenes untouched.
+    """
+    for index, scene in enumerate(scenes or []):
+        text = _scene_content(scene)
+        if not (_INTERACTION_OBJECT.search(text) and _INTERACTION_ACTION.search(text)):
+            continue
+        if index == 0 and scene.get("type") == "avatar":
+            continue
+        scene["interaction_orientation_lock"] = True
+        reject_if = list(scene.get("reject_if") or [])
+        for rule in (
+            "unrelated object or action",
+            "person looking away from the object they are using",
+            "extra people or duplicated props",
+        ):
+            if rule not in reject_if:
+                reject_if.append(rule)
+        scene["reject_if"] = reject_if
+        if scene.get("type") != "avatar":
+            continue
+        scene["requested_type"] = scene.get("requested_type", "avatar")
+        scene["type"] = "image"
+        scene["literal_subject"] = "One person performing the exact narrated action with one clearly visible object"
+        scene["image_prompt"] = (
+            "One person in a natural consumer-camera side or three-quarter view performing only the exact narrated action "
+            "with one clearly visible object; the person's gaze, hands and body are oriented toward the object, "
+            "with no extra people, duplicate props, invented interface or unrelated action"
+        )
+        scene["video_prompt"] = ""
+        scene["presenter_broll"] = False
+        scene["presenter_broll_reason"] = ""
+        scene["presenter_broll_value"] = 0
+        _normalize_scene(scene)
+    return scenes
+
 
 def enforce_phone_visual_contract(scenes):
     """Prevent source-presenter cuts from showing a phone screen backwards.
@@ -571,6 +645,7 @@ def enforce_narration_visual_contract(scenes):
     presenter cut, so all first-person and talking-head beats use the source
     HeyGen avatar, including phrases such as "I sat across the table".
     """
+    enforce_object_interaction_visual_contract(scenes)
     enforce_phone_visual_contract(scenes)
     for scene in scenes or []:
         if scene.get("type") == "avatar":
