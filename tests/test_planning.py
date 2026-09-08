@@ -196,8 +196,8 @@ class PlanningTests(unittest.TestCase):
         }, "image").lower()
         self.assertIn("phone orientation lock", rules)
         self.assertIn("display must face the person", rules)
-        self.assertIn("back or thin edge must face the camera", rules)
-        self.assertIn("screen-facing-camera", rules)
+        self.assertIn("camera may see the display", rules)
+        self.assertIn("looks into the camera", rules)
 
     def test_phone_interaction_never_uses_an_arbitrary_source_avatar_slice(self):
         scenes = [{
@@ -227,8 +227,8 @@ class PlanningTests(unittest.TestCase):
 
     def test_phone_review_rejects_screen_facing_viewer_while_person_looks_at_it(self):
         review_text = " ".join((IMAGE_REVIEW_PROMPT, VIDEO_REVIEW_PROMPT)).lower()
-        self.assertIn("reject a visible phone screen facing the camera", review_text)
-        self.assertIn("reject the clip if the screen faces the camera", review_text)
+        self.assertIn("do not reject a visible screen by itself", review_text)
+        self.assertIn("looks into the camera", review_text)
 
     def test_budget_rebalance_does_not_turn_phone_lock_back_into_avatar(self):
         scenes = [

@@ -169,7 +169,7 @@ Reject if any of these apply: semantically unrelated or merely generic to the ov
 
 MANDATORY PHYSICAL CHECK: count the visible people, heads, arms, hands and important repeated props. Reject any extra, fused, detached or duplicated limb, hand, finger, face or body; impossible joint, grip or body orientation; cloned person; repeated animal; duplicated tool/object; impossible contact, perspective, topology, scale or gravity. Normal cropping and genuine occlusion are allowed: do not reject a limb merely because it is naturally outside the frame or hidden. If hands are too small or obscured to judge, do not invent a defect; reject only a visible anomaly.
 
-PHONE DIRECTION CHECK: When the narration or intended subject says that a person is looking at, reading, checking, holding or operating a phone, the person's gaze must be directed at the device and the display must face that person. Reject a visible phone screen facing the camera in that situation. A screen may face the viewer only when the narration explicitly requires showing the screen to the viewer. Reject the frame if the pose communicates the opposite action.
+PHONE DIRECTION CHECK: When the narration or intended subject says that a person is looking at, reading, checking, holding or operating a phone, the person's gaze and body orientation must be directed at the device and the display must face that person. The camera may naturally see some or all of the display from an oblique angle; do not reject a visible screen by itself. Reject a composition where the person faces or looks into the camera while the phone is deliberately presented screen-first to the viewer instead of being oriented toward the person. A screen may face the viewer when that is explicitly the action, such as showing the screen to someone.
 
 Do not reject merely because the frame is mundane, imperfect, compressed, or because a generic human/animal differs from another generic example.
 Distinguish synthetic gloss from real material response: a small reflection on metal, glass, eyes or a moist nose is natural, not itself a defect. Clean objects need not be dirty. Judge whether the depicted contact and material are physically plausible; do not demand noise, matte skin or visible compression artifacts.
@@ -188,7 +188,7 @@ Reject if it is semantically unrelated, cinematic/CGI/glossy, has visible genera
 IDENTITY AND TALKING-HEAD CHECK: If the narration is first-person biography, a generated face is invalid unless the exact beat explicitly requires a visible interview. If the narration does not require a named speaker or interview, reject any direct-to-camera talking head as generic filler. For an across-the-table interview, require the same two people and room across the strip, with no identity swap and no direct-to-camera speech.
 
 MANDATORY PHYSICAL CHECK: in each frame count visible people, heads, arms, hands and important props, then compare those counts across the strip. Reject an extra/fused/detached limb, hand, finger, face or body; a cloned person; a duplicated animal or prop; an impossible grip, joint, contact, perspective, topology, scale or gravity; or a subject/object that appears, vanishes, merges or multiplies without a real occlusion. Allow natural cropping and occlusion. Do not claim a defect that is not visibly supported by the strip.
-PHONE DIRECTION CHECK: When the narration or intended subject says that a person is looking at, reading, checking, holding or operating a phone, the person's gaze must be directed at the device and the display must face that person. Reject the clip if the screen faces the camera while the person is looking at it. A screen may face the viewer only when the narration explicitly requires showing the screen to the viewer.
+PHONE DIRECTION CHECK: When the narration or intended subject says that a person is looking at, reading, checking, holding or operating a phone, the person's gaze and body orientation must be directed at the device and the display must face that person. The camera may naturally see some or all of the display from an oblique angle; do not reject a visible screen by itself. Reject the clip when the person faces or looks into the camera while the phone is deliberately presented screen-first to the viewer instead of being oriented toward the person. A screen may face the viewer when that is explicitly the action, such as showing the screen to someone.
 Natural small reflections on metal, glass, eyes or moist surfaces are allowed; artificial plastic rendering is not. Stable camera framing and a quiet posture are valid, not insufficient motion. Judge only visible defects; sampled frames cannot prove all intervening motion is correct.
 
 NARRATION: {narration}
@@ -246,10 +246,10 @@ def scene_specific_constraints(scene: dict, medium: str) -> str:
         ) and not re.search(r"\b(show|shows|showing|display|displays|present|presenting)\b.{0,32}\b(?:camera|viewer|зрител)", full_content):
             rules.append(
                 "PHONE ORIENTATION LOCK: The person is looking at, reading, checking or operating the phone. "
-                "The display must face the person and the back or thin edge must face the camera; never show the screen "
-                "to the viewer in this situation. Keep the person's gaze directed at the device, not at the camera. "
-                "If the screen-facing-camera view is essential, the narration must explicitly say that the person shows "
-                "the screen to the viewer; otherwise reject that composition."
+                "The display must face the person and the person's gaze and body must be directed at the device. "
+                "The camera may see the display naturally from an oblique angle; do not hide it just to satisfy this rule. "
+                "Reject only a pose where the person faces or looks into the camera while deliberately presenting the "
+                "phone screen-first to the viewer instead of looking at the device."
             )
     return "\n".join(rules)
 

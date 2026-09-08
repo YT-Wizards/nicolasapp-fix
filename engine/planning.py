@@ -529,11 +529,11 @@ def enforce_phone_visual_contract(scenes):
         if scene.get("type") == "avatar":
             scene["requested_type"] = scene.get("requested_type", "avatar")
             scene["type"] = "image"
-            scene["literal_subject"] = "One person looking down at one phone; the phone display faces the person and its back faces the camera"
+            scene["literal_subject"] = "One person looking down at one phone; the phone display faces the person and may be visible to the camera from an oblique angle"
             scene["image_prompt"] = (
                 "One person in a natural side or three-quarter view looking down at one phone; "
-                "the phone display faces the person and the back or thin edge faces the camera, "
-                "with no readable screen content"
+                "the phone display faces the person while the camera may see the display from a natural oblique angle; "
+                "the person's gaze and body are directed at the device, with no invented readable screen content"
             )
             scene["video_prompt"] = ""
             scene["presenter_broll"] = False
