@@ -36,6 +36,17 @@ process.on('uncaughtException', (error) => {
 process.on('unhandledRejection', (reason) => {
   runtimeLog('unhandledRejection', { reason: String(reason), stack: reason?.stack });
 });
+process.on('SIGTERM', () => {
+  runtimeLog('signal', { signal: 'SIGTERM' });
+  app.quit();
+});
+process.on('SIGINT', () => {
+  runtimeLog('signal', { signal: 'SIGINT' });
+  app.quit();
+});
+process.on('exit', (code) => {
+  runtimeLog('process-exit', { code });
+});
 
 const rootDir = () => {
   if (!app.isPackaged) return path.resolve(__dirname, '..');
