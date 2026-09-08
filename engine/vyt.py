@@ -35,9 +35,11 @@ from operations import OperationLedger, OperationRecoveryRequired
 
 
 stop_requested = threading.Event()
-# Bump when deterministic visual contracts change. This prevents a new
-# generation from silently reusing assets planned under weaker scene rules.
-ANALYSIS_CACHE_VERSION = "2026-09-08-visual-contracts-v7"
+# The checkpoint format stays compatible across visual-contract improvements;
+# individual incompatible assets are invalidated below instead of discarding
+# every paid asset on Resume.
+ANALYSIS_CACHE_VERSION = "2026-08-28-budget-distribution-v6"
+VISUAL_CONTRACT_VERSION = "2026-09-08-interaction-v1"
 IMAGE_OPERATION_TIMEOUT = 10 * 60
 VIDEO_OPERATION_TIMEOUT = 25 * 60
 AI_OPERATION_TIMEOUT = 4 * 60
@@ -385,6 +387,23 @@ class Pipeline:
             if not isinstance(completed, dict):
                 completed = {}
             indexed_record = completed.get(scene["id"])
+            if (
+                scene.get("interaction_orientation_lock")
+                and isinstance(indexed_record, dict)
+                and indexed_record.get("contract_version") != VISUAL_CONTRACT_VERSION
+            ):
+                # This asset was produced before the deterministic interaction
+                # contract existed. Do not silently reuse a potentially wrong
+                # person/object orientation; unrelated completed assets remain
+                # fully resumable.
+                stale_file = indexed_record.get("file")
+                if stale_file:
+                    (self.assets / str(stale_file)).unlink(missing_ok=True)
+                completed.pop(scene["id"], None)
+                reviews = self.checkpoint.get("asset_reviews") or {}
+                reviews.pop(scene["id"], None)
+                self.save_checkpoint(completed_assets=completed, asset_reviews=reviews)
+                return None
             candidates = []
             if isinstance(indexed_record, dict) and indexed_record.get("file"):
                 candidates.append(self.assets / str(indexed_record["file"]))
@@ -553,6 +572,7 @@ class Pipeline:
             completed[scene["id"]] = {
                 "type": scene["type"],
                 "file": Path(asset).name,
+                "contract_version": VISUAL_CONTRACT_VERSION,
             }
             self.save_checkpoint(completed_assets=completed)
 
