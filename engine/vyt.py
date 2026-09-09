@@ -7,6 +7,7 @@ import os
 import re
 import shutil
 import signal
+import subprocess
 import sys
 import tempfile
 import threading
@@ -20,12 +21,13 @@ from media import (
 )
 from planning import (
     build_schedule, build_story_bible, enforce_presenter_broll,
-    ensure_opening_avatar, enforce_object_interaction_visual_contract, enforce_phone_visual_contract,
+    ensure_opening_avatar,
     force_avatar_window, image_fallback_scene, plan_scenes,
     rebalance_scenes_for_budget, review_scene_plan, stratified_generation_order,
     validate_scene_plan,
 )
 from prompts import IMAGE_REVIEW_PROMPT, PLANNER_SYSTEM, VIDEO_REVIEW_PROMPT, image_prompt, video_prompt
+from visual_contract import CONTRACT_SCHEMA_VERSION, QA_POLICY_VERSION, migrate_or_apply_contract
 from providers import (
     AlgrowClient, GeminiGenClient, VercelGatewayClient,
     PaidAssetRecoveryError, PaidAssetWaitingError, ProviderError, ProviderTemporarilyUnavailableError,
@@ -39,7 +41,7 @@ stop_requested = threading.Event()
 # individual incompatible assets are invalidated below instead of discarding
 # every paid asset on Resume.
 ANALYSIS_CACHE_VERSION = "2026-08-28-budget-distribution-v6"
-VISUAL_CONTRACT_VERSION = "2026-09-08-interaction-v1"
+VISUAL_CONTRACT_VERSION = CONTRACT_SCHEMA_VERSION
 IMAGE_OPERATION_TIMEOUT = 10 * 60
 PAID_IMAGE_RECOVERY_TIMEOUT = 30 * 60
 VIDEO_OPERATION_TIMEOUT = 25 * 60
@@ -67,14 +69,17 @@ def asset_contract_signature(scene):
     deterministic lock must never silently reuse an incompatible asset.
     """
     payload = {
+        "semantic_hash": scene.get("contract_semantic_hash"),
+        "schema_version": scene.get("contract_schema_version"),
+        "realization": (scene.get("realization") or {}).get("route"),
+    }
+    payload.update({
         key: scene.get(key)
         for key in (
             "type", "literal_subject", "image_prompt", "video_prompt",
-            "reject_if", "continuity_ids", "named_brand",
-            "phone_orientation_lock", "interaction_orientation_lock",
-            "contract_fallback",
+            "reject_if", "continuity_ids", "named_brand", "contract_fallback",
         )
-    }
+    })
     return hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
 
 
@@ -121,6 +126,55 @@ def validate_review_response(review, is_video=False):
     if not valid or review.get("review_unavailable"):
         raise ProviderError("La revisión visual devolvió datos incompletos o inválidos.")
     return review
+
+
+CRITICAL_CONTRACT_DEFECTS = {
+    "extra_limb", "fused_limb", "detached_limb", "duplicate_entity",
+    "wrong_identity", "wrong_object", "wrong_relation", "unsafe_content",
+}
+
+
+def contract_review_requirements(scene):
+    """Return evidence instructions shared by image and sampled-video QA."""
+    contract = scene.get("visual_contract") or {}
+    requirements = contract.get("constraints", {}).get("required", [])
+    if not requirements:
+        return "No additional contract constraints."
+    return json.dumps([
+        {
+            "id": item.get("id"), "relation": item.get("relation"),
+            "observable": item.get("observable"), "severity": item.get("severity", "critical"),
+        }
+        for item in requirements if isinstance(item, dict)
+    ], ensure_ascii=False)
+
+
+def assess_contract_review(scene, review):
+    """Classify QA evidence without treating uncertainty as approval."""
+    required = (scene.get("visual_contract") or {}).get("constraints", {}).get("required", [])
+    required_by_id = {item.get("id"): item for item in required if isinstance(item, dict)}
+    results = review.get("constraint_results") if isinstance(review, dict) else None
+    if not required_by_id:
+        return "passed", []
+    if not isinstance(results, list):
+        return "needs_review", [{"id": key, "outcome": "uncertain", "defect_code": "missing_evidence"} for key in required_by_id]
+    observed = {item.get("id"): item for item in results if isinstance(item, dict) and item.get("id")}
+    normalized = []
+    has_uncertain = False
+    for identifier, requirement in required_by_id.items():
+        item = observed.get(identifier)
+        outcome = str((item or {}).get("outcome") or "uncertain").lower()
+        defect_code = str((item or {}).get("defect_code") or "")
+        normalized.append({
+            "id": identifier, "outcome": outcome, "defect_code": defect_code,
+            "evidence": str((item or {}).get("evidence") or ""),
+            "severity": str((item or {}).get("severity") or requirement.get("severity") or "critical"),
+        })
+        if outcome == "fail" and (normalized[-1]["severity"] == "critical" or defect_code in CRITICAL_CONTRACT_DEFECTS):
+            return "rejected", normalized
+        if outcome not in {"pass", "not_applicable"}:
+            has_uncertain = True
+    return ("needs_review" if has_uncertain else "passed"), normalized
 
 
 def review_guidance(review, fallback):
@@ -477,10 +531,12 @@ class Pipeline:
             stamp = self.asset_fingerprint(path)
             approved = (
                 isinstance(receipt, dict)
-                and receipt.get("status") == "passed"
+                and receipt.get("status") in {"passed", "needs_review"}
                 and receipt.get("file") == stamp["file"]
                 and receipt.get("size") == stamp["size"]
                 and receipt.get("sha256") == stamp["sha256"]
+                and receipt.get("contract_semantic_hash") == scene.get("contract_semantic_hash")
+                and receipt.get("qa_policy_version") == scene.get("qa_policy_version", QA_POLICY_VERSION)
             )
             if not legacy_approved and not approved:
                 if isinstance(receipt, dict) and receipt.get("status") == "pending":
@@ -525,7 +581,7 @@ class Pipeline:
             self.save_checkpoint(completed_assets=completed)
             return path
 
-    def record_asset_review(self, scene, path, status, warnings=None):
+    def record_asset_review(self, scene, path, status, warnings=None, review=None, constraint_results=None):
         path = Path(path)
         try:
             with self.checkpoint_lock:
@@ -533,9 +589,16 @@ class Pipeline:
                 records[scene["id"]] = {
                     **self.asset_fingerprint(path),
                     "status": status,
+                    "contract_schema_version": scene.get("contract_schema_version"),
+                    "contract_semantic_hash": scene.get("contract_semantic_hash"),
+                    "qa_policy_version": scene.get("qa_policy_version", QA_POLICY_VERSION),
                 }
                 if warnings:
                     records[scene["id"]]["warnings"] = list(warnings)
+                if isinstance(review, dict):
+                    records[scene["id"]]["review"] = review
+                if constraint_results is not None:
+                    records[scene["id"]]["constraint_results"] = constraint_results
                 self.save_checkpoint(asset_reviews=records)
         except Exception as error:
             raise QualityReviewPendingError("El recurso pagado se conserva, pero no se pudo guardar su revisión. Comprueba el espacio disponible antes de reanudar.") from error
@@ -556,6 +619,7 @@ class Pipeline:
         except Exception as error:
             raise QualityReviewPendingError("El recurso pagado está guardado y pendiente de revisión. Reanuda el mismo vídeo para continuar sin regenerarlo.") from error
         passed = review_passed(review)
+        contract_status, constraint_results = assess_contract_review(scene, review)
         thresholds = {"semantic_score": 70, "realism_score": 65 if is_video else 68, "integrity_score": 75}
         if is_video:
             thresholds.update(motion_score=65, continuity_score=75)
@@ -570,13 +634,18 @@ class Pipeline:
         for key, minimum in thresholds.items():
             if review_score(review, key, 0) < minimum:
                 soft_warnings.append(f"{key} below preferred threshold")
-        if hard_failure:
-            self.record_asset_review(scene, path, "rejected")
-            Path(path).unlink(missing_ok=True)
+        if hard_failure or contract_status == "rejected":
+            self.record_asset_review(scene, path, "rejected", review=review, constraint_results=constraint_results)
             error_type = QualityReviewError if is_video else RegeneratableError
             raise error_type("Revisión rechazada: " + review_guidance(review, "use a simple, literal, ordinary real-world shot"))
+        if contract_status == "needs_review":
+            self.record_asset_review(scene, path, "needs_review", review=review, constraint_results=constraint_results)
+            # The media is paid and locally valid.  Preserve it and let the
+            # render/report expose the evidence gap instead of silently
+            # approving it or buying the same scene again.
+            return path
         try:
-            self.record_asset_review(scene, path, "passed", soft_warnings)
+            self.record_asset_review(scene, path, "passed", soft_warnings, review=review, constraint_results=constraint_results)
         except Exception as error:
             raise QualityReviewPendingError("El recurso pagado se conserva, pero no se pudo guardar su aprobación. Reanuda sin regenerarlo.") from error
         return path
@@ -661,6 +730,9 @@ class Pipeline:
     def review_image(self, scene, path):
         prompt = IMAGE_REVIEW_PROMPT.format(
             narration=scene["narration"], subject=scene.get("literal_subject", ""), reject_if=json.dumps(scene.get("reject_if", []), ensure_ascii=False)
+        ) + "\n\nVISUAL CONTRACT TO VERIFY:\n" + contract_review_requirements(scene) + (
+            "\nFor every contract item return constraint_results with id, outcome (pass|fail|uncertain|not_applicable), "
+            "defect_code, evidence and severity. Never mark an unobservable requirement as pass."
         )
         review_path = Path(path)
         temporary_preview = None
@@ -682,6 +754,10 @@ class Pipeline:
                 "integrity_score": {"type": "number", "minimum": 0, "maximum": 100},
                 "issues": {"type": "array", "items": {"type": "string"}},
                 "retry_guidance": {"type": "string"},
+                "constraint_results": {"type": "array", "items": {"type": "object", "properties": {
+                    "id": {"type": "string"}, "outcome": {"type": "string", "enum": ["pass", "fail", "uncertain", "not_applicable"]},
+                    "defect_code": {"type": "string"}, "evidence": {"type": "string"}, "severity": {"type": "string"},
+                }, "required": ["id", "outcome", "defect_code", "evidence", "severity"], "additionalProperties": False}},
             },
             "required": ["pass", "semantic_score", "realism_score", "integrity_score", "issues", "retry_guidance"],
             "additionalProperties": False,
@@ -721,6 +797,9 @@ class Pipeline:
                 "yes — compare the first attached identity reference with the generated strip"
                 if scene.get("presenter_broll") and self.presenter_reference else "no"
             ),
+        ) + "\n\nVISUAL CONTRACT TO VERIFY IN THE TEMPORAL SAMPLE:\n" + contract_review_requirements(scene) + (
+            "\nFor every contract item return constraint_results with id, outcome (pass|fail|uncertain|not_applicable), "
+            "defect_code, evidence and severity. Mark uncertain when the strip cannot prove it."
         )
         review_images = [strip]
         if scene.get("presenter_broll") and self.presenter_reference:
@@ -738,6 +817,10 @@ class Pipeline:
                 "watermark": {"type": "boolean"},
                 "issues": {"type": "array", "items": {"type": "string"}},
                 "retry_guidance": {"type": "string"},
+                "constraint_results": {"type": "array", "items": {"type": "object", "properties": {
+                    "id": {"type": "string"}, "outcome": {"type": "string", "enum": ["pass", "fail", "uncertain", "not_applicable"]},
+                    "defect_code": {"type": "string"}, "evidence": {"type": "string"}, "severity": {"type": "string"},
+                }, "required": ["id", "outcome", "defect_code", "evidence", "severity"], "additionalProperties": False}},
             },
             "required": ["pass", "semantic_score", "realism_score", "integrity_score", "motion_score", "continuity_score", "watermark", "issues", "retry_guidance"],
             "additionalProperties": False,
@@ -885,11 +968,47 @@ class Pipeline:
             self.record_failure(scene, "review_pending", error)
             return output
 
+    def generate_local_screen_composite(self, scene):
+        """Build a deterministic static insert when exact UI text is required.
+
+        This intentionally avoids asking an image model to hallucinate letters.
+        It is a simple neutral screen insert, not an attempt to fake a complete
+        photorealistic interaction scene.
+        """
+        contract = scene.get("visual_contract") or {}
+        required = contract.get("constraints", {}).get("required", [])
+        exact_text = next((str(item.get("text") or "") for item in required if item.get("id") == "exact_screen_text"), "")
+        if not exact_text:
+            raise ValueError("El contrato local de pantalla no contiene el texto exacto.")
+        output = self.assets / f"{scene['id']}.png"
+        escaped = exact_text.replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
+        font = "/System/Library/Fonts/Supplemental/Arial.ttf"
+        filter_graph = (
+            "color=c=#171a1f:s=1920x1080,"
+            "drawbox=x=600:y=150:w=720:h=780:color=#090b0e:t=fill,"
+            "drawbox=x=630:y=190:w=660:h=700:color=#edf1f4:t=fill,"
+            f"drawtext=fontfile='{font}':text='{escaped}':fontcolor=#111827:fontsize=72:"
+            "x=(w-text_w)/2:y=(h-text_h)/2"
+        )
+        result = subprocess.run(
+            ["ffmpeg", "-y", "-f", "lavfi", "-i", filter_graph, "-frames:v", "1", str(output)],
+            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, timeout=30,
+        )
+        if result.returncode != 0 or not output.exists():
+            raise RuntimeError("No se pudo componer localmente la pantalla exacta.")
+        self.record_asset_review(
+            scene, output, "passed", warnings=["local_exact_screen_composite"],
+            constraint_results=[{"id": "exact_screen_text", "outcome": "pass", "defect_code": "", "evidence": "local deterministic compositor", "severity": "critical"}],
+        )
+        return output
+
     def generate_one(self, scene):
         self.check_stop()
         media_type = scene["type"]
         if media_type == "avatar":
             return None
+        if (scene.get("realization") or {}).get("route") == "local_screen_composite":
+            return self.generate_local_screen_composite(scene)
         recovering_paid_image = bool(self.pending_image_job_for(scene))
         if recovering_paid_image and media_type == "video":
             # A prior run may have reached the paid still-image fallback after a
@@ -1107,11 +1226,15 @@ class Pipeline:
                 self.reviewer, scenes, bible, progress=review_progress,
                 resume_reviewed=resumed_review, checkpoint=save_review_checkpoint,
             )
-        # Apply deterministic physical locks even when the plan came from an
-        # older checkpoint whose paid editorial review is intentionally reused.
-        enforce_object_interaction_visual_contract(scenes)
-        enforce_phone_visual_contract(scenes)
         ensure_opening_avatar(scenes)
+        # Upgrade a legacy checkpoint in place.  This changes the semantic
+        # contract for future generation without deleting paid media or remote
+        # provider ids; the cache gate decides compatibility scene by scene.
+        for index, scene in enumerate(scenes):
+            migrate_or_apply_contract(
+                scene, job_id=self.config["id"],
+                is_opening=index == 0 and scene.get("type") == "avatar",
+            )
         planning_warnings = validate_scene_plan(scenes, duration)
         force_avatar_window(scenes, qr_window)
         # Older builds could mutate a scene to avatar/image after a temporary

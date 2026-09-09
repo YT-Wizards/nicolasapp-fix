@@ -12,6 +12,7 @@ from prompts import (
     STYLE_CORE,
     VIDEO_MOTION,
 )
+from visual_contract import apply_visual_contract, prompt_requirements
 
 
 VISUAL_STRATEGIES = {
@@ -539,87 +540,32 @@ def _scene_content(scene):
 
 
 def enforce_object_interaction_visual_contract(scenes):
-    """Prevent arbitrary presenter slices from depicting prop interactions.
+    """Compatibility adapter for legacy callers.
 
-    This is intentionally broader than the phone-specific rule: it protects
-    any clearly narrated object interaction while leaving the mandatory
-    opening presenter and already-generated video/image scenes untouched.
+    Object orientation is now derived solely by ``VisualSceneContract``; this
+    function deliberately makes no independent object/phone decision.
     """
     for index, scene in enumerate(scenes or []):
-        text = _scene_content(scene)
-        if not (_INTERACTION_OBJECT.search(text) and _INTERACTION_ACTION.search(text)):
-            continue
-        if index == 0 and scene.get("type") == "avatar":
-            continue
-        scene["interaction_orientation_lock"] = True
-        reject_if = list(scene.get("reject_if") or [])
-        for rule in (
-            "unrelated object or action",
-            "person looking away from the object they are using",
-            "extra people or duplicated props",
-        ):
-            if rule not in reject_if:
-                reject_if.append(rule)
-        scene["reject_if"] = reject_if
-        if scene.get("type") != "avatar":
-            continue
-        scene["requested_type"] = scene.get("requested_type", "avatar")
-        scene["type"] = "image"
-        scene["literal_subject"] = "One person performing the exact narrated action with one clearly visible object"
-        scene["image_prompt"] = (
-            "One person in a natural consumer-camera side or three-quarter view performing only the exact narrated action "
-            "with one clearly visible object; the person's gaze, hands and body are oriented toward the object, "
-            "with no extra people, duplicate props, invented interface or unrelated action"
-        )
-        scene["video_prompt"] = ""
-        scene["presenter_broll"] = False
-        scene["presenter_broll_reason"] = ""
-        scene["presenter_broll_value"] = 0
-        _normalize_scene(scene)
+        apply_visual_contract(scene, is_opening=index == 0 and scene.get("type") == "avatar")
+        required = {item.get("id") for item in scene.get("visual_contract", {}).get("constraints", {}).get("required", [])}
+        scene["interaction_orientation_lock"] = bool({"actor_looks_at_device", "natural_grip"} & required)
+        if scene["interaction_orientation_lock"] and scene.get("type") == "image":
+            scene["image_prompt"] = (scene.get("image_prompt") or scene.get("literal_subject") or "One person performing the narrated action") + " " + prompt_requirements(scene["visual_contract"])
+            _normalize_scene(scene)
     return scenes
 
 
 def enforce_phone_visual_contract(scenes):
-    """Prevent source-presenter cuts from showing a phone screen backwards.
+    """Compatibility adapter for old checkpoints and tests.
 
-    The source HeyGen footage is not regeneratable. When a beat explicitly
-    depicts someone operating a phone, use a generated still instead of an
-    arbitrary source-avatar slice, where the screen direction can be enforced
-    and reviewed.
+    The device itself is not special: the common relation engine determines
+    when a surface faces its user, viewer or named recipient.
     """
-    for index, scene in enumerate(scenes or []):
-        text = _scene_text(
-            " ".join(str(scene.get(key) or "") for key in ("narration", "literal_subject", "image_prompt", "video_prompt"))
-        )
-        if not (_PHONE_WORD.search(text) and _PHONE_ACTION.search(text)):
-            continue
-        # The render contract deliberately starts every production with the
-        # source HeyGen presenter. Protect later phone beats without breaking
-        # that invariant when the narration opens with “pick up your phone”.
-        if index == 0 and scene.get("type") == "avatar":
-            continue
-        scene["phone_orientation_lock"] = True
-        reject_if = list(scene.get("reject_if") or [])
-        if "phone screen facing the camera while the person looks at it" not in reject_if:
-            reject_if.append("phone screen facing the camera while the person looks at it")
-        if "phone display facing the camera head-on unless showing it is explicitly narrated" not in reject_if:
-            reject_if.append("phone display facing the camera head-on unless showing it is explicitly narrated")
-        scene["reject_if"] = reject_if
-        if scene.get("type") == "avatar":
-            scene["requested_type"] = scene.get("requested_type", "avatar")
-            scene["type"] = "image"
-            scene["literal_subject"] = "One person looking down at one phone; the phone display faces the person and may be visible to the camera from an oblique angle"
-            scene["image_prompt"] = (
-                "One person in a natural side, over-the-shoulder or three-quarter view looking down at one phone; "
-                "the phone display faces the person and must not face the camera head-on; keep the screen turned away, "
-                "edge-on or visible only from a natural oblique angle; the person's gaze and body are directed at the device, "
-                "with no invented readable screen content and no screen-showing pose"
-            )
-            scene["video_prompt"] = ""
-            scene["presenter_broll"] = False
-            scene["presenter_broll_reason"] = ""
-            scene["presenter_broll_value"] = 0
-            _normalize_scene(scene)
+    enforce_object_interaction_visual_contract(scenes)
+    for scene in scenes or []:
+        entity_ids = {item.get("id") for item in scene.get("visual_contract", {}).get("entities", [])}
+        required = {item.get("id") for item in scene.get("visual_contract", {}).get("constraints", {}).get("required", [])}
+        scene["phone_orientation_lock"] = "phone" in entity_ids and "display_faces_actor" in required
     return scenes
 
 
@@ -650,22 +596,37 @@ def enforce_narration_visual_contract(scenes):
     presenter cut, so all first-person and talking-head beats use the source
     HeyGen avatar, including phrases such as "I sat across the table".
     """
-    enforce_object_interaction_visual_contract(scenes)
-    enforce_phone_visual_contract(scenes)
-    for scene in scenes or []:
-        if scene.get("type") == "avatar":
-            continue
+    for index, scene in enumerate(scenes or []):
         narration = _scene_text(scene.get("narration"))
-        prompt = _scene_text(
+        pre_contract_prompt = _scene_text(
             " ".join(str(scene.get(key) or "") for key in ("literal_subject", "image_prompt", "video_prompt"))
         )
         first_person_authority = bool(_FIRST_PERSON_AUTHORITY.search(narration))
-        generic_talking_head = bool(_TALKING_HEAD_MARKERS.search(prompt))
+        generic_talking_head = bool(_TALKING_HEAD_MARKERS.search(pre_contract_prompt))
+        apply_visual_contract(scene, is_opening=index == 0 and scene.get("type") == "avatar")
+        required = {item.get("id") for item in scene.get("visual_contract", {}).get("constraints", {}).get("required", [])}
+        entity_ids = {item.get("id") for item in scene.get("visual_contract", {}).get("entities", [])}
+        scene["interaction_orientation_lock"] = bool({"actor_looks_at_device", "natural_grip"} & required)
+        scene["phone_orientation_lock"] = "phone" in entity_ids and "display_faces_actor" in required
+        if scene.get("type") == "image" and scene.get("contract_fallback") == "stable_interaction_not_source_avatar_slice":
+            scene["literal_subject"] = "One person performing the exact narrated action with one clearly visible object"
+            scene["image_prompt"] = (
+                "One person in a natural consumer-camera side or three-quarter view performing only the exact narrated action "
+                "with one clearly visible object; " + prompt_requirements(scene["visual_contract"])
+            )
+            scene["video_prompt"] = ""
+            scene["presenter_broll"] = False
+            scene["presenter_broll_reason"] = ""
+            scene["presenter_broll_value"] = 0
         if first_person_authority or generic_talking_head:
             scene["requested_type"] = scene.get("requested_type", scene.get("type"))
             scene["contract_fallback"] = "source_presenter_for_identity_or_talking_head"
             scene["type"] = "avatar"
             _normalize_scene(scene)
+            continue
+        if scene.get("type") == "avatar":
+            _normalize_scene(scene)
+            continue
     return scenes
 
 

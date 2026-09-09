@@ -2,6 +2,8 @@
 
 import re
 
+from visual_contract import prompt_requirements
+
 STYLE_CORE = """
 An ordinary paused frame from a factual 1080p YouTube video recorded on a consumer smartphone or camcorder. Candid real-life footage, not a professional photograph. Natural perspective around 24–35 mm equivalent, readable surroundings, available window light indoors or ordinary daylight outdoors. Neutral white balance, moderate contrast and natural restrained colours. Exposure stays consistent. The framing is practical and believable, not staged for an advertisement.
 
@@ -211,6 +213,14 @@ def scene_specific_constraints(scene: dict, medium: str) -> str:
     # a phone shot).
     full_content = content
     rules = []
+    contract = scene.get("visual_contract")
+    if isinstance(contract, dict):
+        # The planner, generator and reviewer must consume exactly the same
+        # observable relations.  Keep unrelated sport/animal detail below,
+        # but never re-derive a conflicting device rule from raw words here.
+        compiled = prompt_requirements(contract)
+        if compiled:
+            rules.append(compiled)
     if re.search(r"\b(pickleball|tennis|tenis|pádel|padel|badminton|bádminton)\b", content):
         rules.append(
             "RACKET-SPORT DETAIL: Prefer one player's ready stance, paddle grip or one small footwork step over a rally. "
@@ -232,7 +242,7 @@ def scene_specific_constraints(scene: dict, medium: str) -> str:
             "their normal joint structure and paws; hidden paws may remain hidden. Fur has irregular soft clumps, "
             "not shiny strands or a plastic surface. Do not add another animal or a handler unless the scene needs one."
         )
-    if re.search(r"\b(phone|smartphone|telephone|teléfono|telefono|móvil|movil)\b", full_content):
+    if not isinstance(contract, dict) and re.search(r"\b(phone|smartphone|telephone|teléfono|telefono|móvil|movil)\b", full_content):
         rules.append(
             "PHONE DETAIL: One device per necessary user, held in one uncomplicated grip or resting flat on a surface. "
             "Keep its shape and hand contact stable. Turn the display away or keep it unreadable unless exact real content "

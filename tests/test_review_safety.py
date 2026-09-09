@@ -97,15 +97,16 @@ class ReviewRecoveryTests(unittest.TestCase):
             pipeline.geminigen.generate_video.assert_not_called()
 
     @patch("vyt.probe", return_value={"duration": 8, "width": 1920, "height": 1080})
-    def test_orphan_with_anatomy_failure_is_not_approved(self, _probe):
+    def test_orphan_with_anatomy_failure_is_not_approved_but_is_preserved(self, _probe):
         pipeline = self.pipeline()
         scene = {"id": "b002", "type": "image", "narration": "one person"}
         output = pipeline.assets / "b002.png"
         output.write_bytes(b"x" * 2000)
         pipeline.reviewer.chat_json = Mock(return_value={**accepted(), "integrity_score": 25})
         self.assertIsNone(pipeline.cached_asset_for(scene))
-        self.assertFalse(output.exists())
+        self.assertTrue(output.exists())
         self.assertNotIn("b002", pipeline.checkpoint.get("completed_assets", {}))
+        self.assertEqual(pipeline.checkpoint["asset_reviews"]["b002"]["status"], "rejected")
         pipeline.algrow.generate_image.assert_not_called()
 
     @patch("vyt.extract_review_strip", side_effect=RuntimeError("ffmpeg failed"))
