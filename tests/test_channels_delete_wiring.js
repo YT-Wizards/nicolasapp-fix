@@ -22,7 +22,7 @@ assert.match(
 
 assert.match(
   renderer,
-  /<button\b[^>]*data-channel-delete=["']\$\{channel\.id\}["'][^>]*>\s*Eliminar\s*<\/button>/,
+  /<button\b[^>]*data-channel-delete=["']\$\{channel\.id\}["'][^>]*>\s*\$\{t\('delete'\)\}\s*<\/button>/,
   'cada fila debe ofrecer una acción Eliminar asociada al id de ese canal'
 );
 assert.match(
@@ -57,7 +57,7 @@ assert.match(
 );
 assert.match(
   renderer,
-  /showToast\(\s*["']Canal eliminado["']\s*\)/,
+  /showToast\(\s*t\('deleted'\)\s*\)/,
   'el usuario debe recibir confirmación visual del borrado'
 );
 assert.match(
