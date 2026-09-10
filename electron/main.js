@@ -252,10 +252,10 @@ async function inspectAudio(filePath) {
   return info;
 }
 
-function runExternalWorkflow(args, onLine = () => {}) {
+function runExternalWorkflow(args, onLine = () => {}, environment = {}) {
   const engine = path.join(rootDir(), 'engine', 'external_workflow.py');
   return new Promise((resolve, reject) => {
-    const child = spawn(PYTHON, [engine, ...args], { env: { ...process.env, PYTHONUNBUFFERED: '1' }, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(PYTHON, [engine, ...args], { env: { ...process.env, PYTHONUNBUFFERED: '1', ...environment }, stdio: ['ignore', 'pipe', 'pipe'] });
     let buffer = ''; let stderr = ''; let result = null;
     child.stdout.on('data', (chunk) => {
       buffer += chunk.toString();
@@ -293,10 +293,11 @@ async function createExternalPlan(payload) {
   const planPath = path.join(directory, 'plan.json');
   fs.writeFileSync(scriptPath, script, { mode: 0o600 });
   try {
+    const secrets = getSecrets();
     const result = await runExternalWorkflow([
       'plan', '--script', scriptPath, '--audio', audio, '--style', style || 'realistic consumer-camera documentary B-roll',
       '--output', planPath, '--workspace', path.join(directory, 'work'), '--root-dir', rootDir(),
-    ]);
+    ], () => {}, { VYT_GATEWAY_KEY: secrets.gatewayKey });
     return { ...result, id, planPath };
   } catch (error) {
     try { fs.rmSync(directory, { recursive: true, force: true }); } catch { /* temporary plan cleanup */ }
