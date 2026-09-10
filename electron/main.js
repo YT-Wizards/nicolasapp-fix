@@ -897,6 +897,18 @@ ipcMain.handle('choose-audio', async () => {
   });
   return result.canceled ? null : inspectAudio(result.filePaths[0]);
 });
+ipcMain.handle('choose-script', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Selecciona el guion final', properties: ['openFile'],
+    filters: [{ name: 'Guion', extensions: ['txt', 'md'] }]
+  });
+  if (result.canceled) return null;
+  const filePath = result.filePaths[0];
+  const text = fs.readFileSync(filePath, 'utf8').trim();
+  if (!text) throw new Error('El archivo del guion está vacío.');
+  if (text.length > 500000) throw new Error('El archivo del guion es demasiado grande.');
+  return { path: filePath, name: path.basename(filePath), text };
+});
 ipcMain.handle('choose-clips-folder', async () => {
   const result = await dialog.showOpenDialog(mainWindow, { title: 'Selecciona la carpeta de clips', properties: ['openDirectory'] });
   return result.canceled ? null : { path: result.filePaths[0], name: path.basename(result.filePaths[0]) };

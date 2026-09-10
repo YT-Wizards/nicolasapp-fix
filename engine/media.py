@@ -135,8 +135,14 @@ def _merge_transcription_segments(segments, duration):
     return merged
 
 
-def _run_whisper(whisper, wav, output_prefix, model_path, timeout):
-    command = [whisper, "-m", str(model_path), "-f", str(wav), "-l", "auto", "-oj", "-of", str(output_prefix), "-ng", "-t", "8", "-np"]
+def _run_whisper(whisper, wav, output_prefix, model_path, timeout, disable_gpu=False):
+    # Let whisper.cpp use Metal on macOS when it is available.  ``-ng`` forces
+    # CPU-only inference and turned short manual-mode plans into multi-minute
+    # waits on this app's target platform.  The binary still falls back to CPU
+    # automatically on machines without GPU support.
+    command = [whisper, "-m", str(model_path), "-f", str(wav), "-l", "auto", "-oj", "-of", str(output_prefix), "-t", "8", "-np"]
+    if disable_gpu:
+        command.append("-ng")
     try:
         run(command, timeout=timeout)
     except RuntimeError:
@@ -184,6 +190,17 @@ def transcribe(source, duration, workspace, model_path):
                 whisper, wav, output_prefix, model_path,
                 timeout=max(600, int((end - start) * 2)),
             )
+            # Some whisper.cpp/Metal combinations return a successful JSON
+            # envelope with no segments.  Falling back to CPU preserves a
+            # usable manual workflow instead of surfacing a cryptic IndexError
+            # from the downstream timing planner.
+            if not _parse_whisper_segments(data):
+                cpu_prefix = cache / f"{key}.cpu.transcript"
+                data = _run_whisper(
+                    whisper, wav, cpu_prefix, model_path,
+                    timeout=max(600, int((end - start) * 2)), disable_gpu=True,
+                )
+                Path(f"{cpu_prefix}.json").unlink(missing_ok=True)
             cached.write_text(json.dumps(data, ensure_ascii=False))
             wav.unlink(missing_ok=True)
             Path(f"{output_prefix}.json").unlink(missing_ok=True)

@@ -29,3 +29,13 @@ class ExternalWorkflowTests(unittest.TestCase):
         self.assertEqual(report["missing"], [3])
         self.assertEqual(report["too_short"], [{"number": 2, "required": 5.0, "actual": 3.0}])
         self.assertFalse(report["ready"])
+
+    def test_plan_handles_one_whisper_segment_for_many_script_sentences(self):
+        plan = build_external_plan(
+            "First sentence. Second sentence. Third sentence.",
+            [{"start": 0, "end": 12, "text": "all narration collapsed into one segment"}],
+            "realistic documentary",
+        )
+        self.assertEqual(plan["scenes"][0]["start"], 0.0)
+        self.assertAlmostEqual(plan["scenes"][-1]["end"], 12.0)
+        self.assertTrue(all(item["duration"] > 0 for item in plan["scenes"]))

@@ -3,6 +3,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('vyt', {
   chooseVideo: () => ipcRenderer.invoke('choose-video'),
   chooseAudio: () => ipcRenderer.invoke('choose-audio'),
+  chooseScript: () => ipcRenderer.invoke('choose-script'),
   chooseClipsFolder: () => ipcRenderer.invoke('choose-clips-folder'),
   chooseProductQr: () => ipcRenderer.invoke('choose-product-qr'),
   inspectVideo: (filePath) => ipcRenderer.invoke('inspect-video', filePath),

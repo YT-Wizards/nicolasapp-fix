@@ -45,6 +45,26 @@ def build_external_plan(script: str, transcript: Iterable[Dict[str, Any]], style
         raise ValueError("Añade un guion antes de crear los prompts.")
     if not timing:
         raise ValueError("No se encontraron frases en el audio.")
+    # Whisper can collapse short or very clean narration into just one broad
+    # segment.  The previous segment-to-sentence loop then ran past the end of
+    # ``timing`` whenever the written script had several sentences.  Keep real
+    # timings when there are enough of them; otherwise create proportional
+    # phrase windows inside Whisper's known audio range.
+    if len(timing) < len(phrases):
+        source_start = float(timing[0]["start"])
+        source_end = float(timing[-1]["end"])
+        total_words = max(1, sum(max(1, len(phrase.split())) for phrase in phrases))
+        cursor = source_start
+        expanded_timing = []
+        for index, phrase in enumerate(phrases):
+            if index == len(phrases) - 1:
+                end = source_end
+            else:
+                share = max(1, len(phrase.split())) / total_words
+                end = min(source_end, cursor + (source_end - source_start) * share)
+            expanded_timing.append({"start": cursor, "end": end, "text": phrase})
+            cursor = end
+        timing = expanded_timing
     audio_start = float(timing[0]["start"])
     audio_end = float(timing[-1]["end"])
     # Whisper gives phrase-level time ranges.  Preserve those real boundaries
