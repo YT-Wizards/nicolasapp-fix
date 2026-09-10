@@ -108,7 +108,7 @@ function loadPersistentState() {
   for (const item of state.history) {
     if (item.status !== 'failed' || item.resumable || !jobStore) continue;
     const job = jobStore.getJob(item.id);
-    if (!job?.source || !fs.existsSync(job.source)) continue;
+    if (!job?.source || job.external || !fs.existsSync(job.source)) continue;
     item.resumable = true;
     item.testMode = Boolean(job.testMode);
     item.resumePayload = {
@@ -246,6 +246,70 @@ async function inspectVideo(filePath) {
   };
 }
 
+async function inspectAudio(filePath) {
+  const info = await inspectVideo(filePath);
+  if (!info.hasAudio || info.duration <= 1) throw new Error('El archivo seleccionado no contiene una pista de audio válida.');
+  return info;
+}
+
+function runExternalWorkflow(args, onLine = () => {}) {
+  const engine = path.join(rootDir(), 'engine', 'external_workflow.py');
+  return new Promise((resolve, reject) => {
+    const child = spawn(PYTHON, [engine, ...args], { env: { ...process.env, PYTHONUNBUFFERED: '1' }, stdio: ['ignore', 'pipe', 'pipe'] });
+    let buffer = ''; let stderr = ''; let result = null;
+    child.stdout.on('data', (chunk) => {
+      buffer += chunk.toString();
+      const lines = buffer.split(/\r?\n/); buffer = lines.pop() || '';
+      lines.forEach((line) => {
+        onLine(line);
+        if (line.startsWith('VYT_RESULT:')) {
+          try { result = JSON.parse(line.slice('VYT_RESULT:'.length)); } catch { /* use process error below */ }
+        }
+      });
+    });
+    child.stderr.on('data', (chunk) => { stderr = `${stderr}${chunk}`.slice(-4000); });
+    child.on('error', reject);
+    child.on('close', (code) => {
+      if (buffer.startsWith('VYT_RESULT:')) {
+        try { result = JSON.parse(buffer.slice('VYT_RESULT:'.length)); } catch { /* handled below */ }
+      }
+      if (result?.ok) resolve(result);
+      else reject(new Error(result?.error || stderr.trim() || `El proceso terminó con código ${code}.`));
+    });
+  });
+}
+
+async function createExternalPlan(payload) {
+  const script = String(payload?.script || '').trim();
+  const audio = String(payload?.audio || '');
+  const style = String(payload?.style || '').trim();
+  if (!script) throw new Error('Pega el guion antes de crear los prompts.');
+  if (!audio || !fs.existsSync(audio)) throw new Error('Selecciona la locución final.');
+  await inspectAudio(audio);
+  const id = crypto.randomUUID();
+  const directory = userFile(path.join('external-plans', id));
+  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+  const scriptPath = path.join(directory, 'script.txt');
+  const planPath = path.join(directory, 'plan.json');
+  fs.writeFileSync(scriptPath, script, { mode: 0o600 });
+  try {
+    const result = await runExternalWorkflow([
+      'plan', '--script', scriptPath, '--audio', audio, '--style', style || 'realistic consumer-camera documentary B-roll',
+      '--output', planPath, '--workspace', path.join(directory, 'work'), '--root-dir', rootDir(),
+    ]);
+    return { ...result, id, planPath };
+  } catch (error) {
+    try { fs.rmSync(directory, { recursive: true, force: true }); } catch { /* temporary plan cleanup */ }
+    throw error;
+  }
+}
+
+async function validateExternalClips(planPath, clipsFolder) {
+  if (!planPath || !fs.existsSync(planPath)) throw new Error('No encuentro el plan de prompts. Créalo de nuevo.');
+  if (!clipsFolder || !fs.existsSync(clipsFolder)) throw new Error('Selecciona la carpeta que contiene los clips.');
+  return runExternalWorkflow(['validate', '--plan', planPath, '--clips', clipsFolder]);
+}
+
 function sanitizeTitle(title) {
   return String(title || 'video-vyt')
     .normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
@@ -359,9 +423,9 @@ function completeJob(job, result) {
     requestedCounts: result.requested_counts || {},
     failures: Array.isArray(result.failures) ? result.failures : [],
     warning: result.warning || '',
-    maxCostUsd: Number(job.maxCostUsd || (job.testMode ? TEST_MAX_COST_USD : FULL_MAX_COST_USD)),
-    resumable: !result.ok && fs.existsSync(job.source),
-    resumePayload: !result.ok && fs.existsSync(job.source) ? {
+    maxCostUsd: job.external ? 0 : Number(job.maxCostUsd || (job.testMode ? TEST_MAX_COST_USD : FULL_MAX_COST_USD)),
+    resumable: !job.external && !result.ok && fs.existsSync(job.source),
+    resumePayload: !job.external && !result.ok && fs.existsSync(job.source) ? {
       source: job.source,
       branding: Boolean(job.branding),
       testMode: Boolean(job.testMode),
@@ -391,6 +455,7 @@ function runNextJobs() {
 }
 
 function startJob(job) {
+  if (job.external) return startExternalRenderJob(job);
   const secrets = getSecrets();
   const engine = path.join(rootDir(), 'engine', 'vyt.py');
   const outputPath = job.outputPath || chooseOutputPath(job.title, job.source);
@@ -472,6 +537,36 @@ function startJob(job) {
   });
 }
 
+function startExternalRenderJob(job) {
+  const outputPath = job.outputPath || chooseOutputPath(job.title, job.source);
+  const args = ['render', '--plan', job.external.planPath, '--audio', job.source, '--clips', job.external.clipsFolder, '--output', outputPath, '--workspace', job.external.workspace];
+  const engine = path.join(rootDir(), 'engine', 'external_workflow.py');
+  const child = spawn(PYTHON, [engine, ...args], { env: { ...process.env, PYTHONUNBUFFERED: '1' }, stdio: ['ignore', 'pipe', 'pipe'] });
+  processes.set(job.id, child);
+  updateJob(job.id, { status: 'running', phase: 'Montando clips', progress: 1, outputPath });
+  let stdoutBuffer = ''; let stderrTail = ''; let result = null;
+  child.stdout.on('data', (chunk) => {
+    stdoutBuffer += chunk.toString();
+    const lines = stdoutBuffer.split(/\r?\n/); stdoutBuffer = lines.pop() || '';
+    lines.forEach((line) => {
+      parseEngineLine(job.id, line);
+      if (line.startsWith('VYT_RESULT:')) {
+        try { result = JSON.parse(line.slice('VYT_RESULT:'.length)); } catch { /* wait for close */ }
+      }
+    });
+  });
+  child.stderr.on('data', (chunk) => { stderrTail = `${stderrTail}${chunk}`.slice(-4000); });
+  child.on('close', (code) => {
+    processes.delete(job.id);
+    if (job.status === 'cancelled' || (appIsQuitting && job.status === 'paused')) { runNextJobs(); return; }
+    if (!result && stdoutBuffer.startsWith('VYT_RESULT:')) {
+      try { result = JSON.parse(stdoutBuffer.slice('VYT_RESULT:'.length)); } catch { /* use fallback */ }
+    }
+    completeJob(job, result || { ok: code === 0 && fs.existsSync(outputPath), output_path: fs.existsSync(outputPath) ? outputPath : '', error: stderrTail.trim() || `El montaje terminó con código ${code}.`, cost_usd: 0 });
+    runNextJobs();
+  });
+}
+
 async function createJob(payload) {
   const sourceIdentity = path.resolve(String(payload.source || '')).toLocaleLowerCase();
   const duplicate = jobStore?.findActiveBySource(sourceIdentity) || state.jobs.find((job) =>
@@ -541,6 +636,28 @@ async function createJob(payload) {
   jobStore.upsertJob(job);
   broadcast();
   runNextJobs();
+  return { ok: true, id: job.id };
+}
+
+async function createExternalRenderJob(payload) {
+  const planPath = String(payload?.planPath || '');
+  const source = String(payload?.audio || '');
+  const clipsFolder = String(payload?.clipsFolder || '');
+  if (!planPath || !fs.existsSync(planPath)) throw new Error('No encuentro el plan de prompts.');
+  if (!source || !fs.existsSync(source)) throw new Error('No encuentro la locución original.');
+  const checked = await validateExternalClips(planPath, clipsFolder);
+  if (!checked.report?.ready) throw new Error('Faltan clips o alguno es demasiado corto. Revisa la comprobación antes de montar.');
+  const jobId = crypto.randomUUID();
+  const plan = readJson(planPath, {});
+  if (!Array.isArray(plan.scenes) || !plan.scenes.length) throw new Error('El plan de prompts está vacío o no es válido.');
+  const job = {
+    id: jobId, title: sanitizeTitle(payload?.title), source, sourceIdentity: `${path.resolve(source).toLocaleLowerCase()}\u0000${planPath}`,
+    duration: Number(plan.duration || 0), branding: false, productSale: { enabled: false }, testMode: false, maxCostUsd: 0,
+    external: { planPath, clipsFolder, workspace: path.join(path.dirname(planPath), 'render-work') },
+    status: 'queued', progress: 0, phase: 'En cola', detail: 'Montaje de clips externos', etaSeconds: null,
+    spentUsd: 0, estimateUsd: 0, outputPath: '', createdAt: nowIso(), updatedAt: nowIso(),
+  };
+  state.jobs.unshift(job); jobStore.upsertJob(job); broadcast(); runNextJobs();
   return { ok: true, id: job.id };
 }
 
@@ -773,6 +890,17 @@ ipcMain.handle('choose-video', async () => {
   });
   return result.canceled ? null : inspectVideo(result.filePaths[0]);
 });
+ipcMain.handle('choose-audio', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Selecciona la locución final', properties: ['openFile'],
+    filters: [{ name: 'Audio', extensions: ['mp3', 'm4a', 'wav', 'aac', 'flac', 'mp4', 'mov'] }]
+  });
+  return result.canceled ? null : inspectAudio(result.filePaths[0]);
+});
+ipcMain.handle('choose-clips-folder', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, { title: 'Selecciona la carpeta de clips', properties: ['openDirectory'] });
+  return result.canceled ? null : { path: result.filePaths[0], name: path.basename(result.filePaths[0]) };
+});
 ipcMain.handle('choose-product-qr', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
     title: 'Selecciona el QR del producto',
@@ -789,6 +917,9 @@ ipcMain.handle('choose-product-qr', async () => {
 });
 ipcMain.handle('inspect-video', (_event, filePath) => inspectVideo(filePath));
 ipcMain.handle('create-job', (_event, payload) => createJob(payload));
+ipcMain.handle('external-create-plan', (_event, payload) => createExternalPlan(payload));
+ipcMain.handle('external-validate-clips', (_event, planPath, clipsFolder) => validateExternalClips(planPath, clipsFolder));
+ipcMain.handle('external-render', (_event, payload) => createExternalRenderJob(payload));
 ipcMain.handle('resume-job', (_event, historyId) => {
   const item = state.history.find((entry) => entry.id === String(historyId || ''));
   if (!item?.resumable || !item.resumePayload) throw new Error('Это видео нельзя возобновить из сохранённого checkpoint.');

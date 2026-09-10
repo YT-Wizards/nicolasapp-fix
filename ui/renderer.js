@@ -2,6 +2,9 @@ const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
 let selectedVideo = null;
 let selectedProductQr = null;
+let selectedExternalAudio = null;
+let selectedExternalClipsFolder = null;
+let externalPlan = null;
 let appState = { jobs: [], history: [] };
 let channelsState = { channels: [], proxies: [], labels: [] };
 let channelsLoaded = false;
@@ -105,6 +108,96 @@ async function selectProductQr() {
   showError($('#formError'), '');
 }
 
+function switchWorkflow(workflow) {
+  const external = workflow === 'external';
+  $('#automaticWorkflow').hidden = external;
+  $('#externalWorkflow').hidden = !external;
+  $$('.workflow-tab').forEach((button) => button.classList.toggle('active', button.dataset.workflow === workflow));
+}
+
+function downloadText(filename, content, type = 'text/plain') {
+  const url = URL.createObjectURL(new Blob([content], { type }));
+  const link = document.createElement('a');
+  link.href = url; link.download = filename; link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+async function selectExternalAudio() {
+  const info = await window.vyt.chooseAudio();
+  if (!info) return;
+  selectedExternalAudio = info;
+  $('#externalAudioTitle').textContent = info.name;
+  $('#externalAudioMeta').textContent = `${formatDuration(info.duration)} · audio final listo`;
+  if (!$('#externalTitleInput').value.trim()) $('#externalTitleInput').value = info.name.replace(/\.[^.]+$/, '');
+  showError($('#externalError'), '');
+}
+
+async function createExternalPlan() {
+  try {
+    const script = $('#externalScriptInput').value.trim();
+    if (!script) throw new Error('Pega el guion final antes de continuar.');
+    if (!selectedExternalAudio) throw new Error('Selecciona la locución final antes de continuar.');
+    const button = $('#externalPlanButton');
+    button.disabled = true;
+    showError($('#externalError'), 'Transcribiendo el audio y creando los prompts…');
+    const result = await window.vyt.createExternalPlan({ script, audio: selectedExternalAudio.path, style: $('#externalStyleSelect').value });
+    externalPlan = result;
+    const prompts = result.plan.scenes.map((scene) => scene.prompt).join('\n\n');
+    $('#externalPlanSummary').hidden = false;
+    $('#externalPlanSummary').innerHTML = `<b>${result.plan.scenes.length} prompts listos.</b> Cada uno tiene un número y el tiempo exacto de montaje. <a href="#" id="downloadExternalPrompts">Descargar prompts (.txt)</a>`;
+    $('#externalClipArea').hidden = false;
+    $('#downloadExternalPrompts').onclick = (event) => { event.preventDefault(); downloadText('veo-prompts.txt', prompts); };
+    showError($('#externalError'), '');
+  } catch (error) { showError($('#externalError'), error.message); }
+  finally { $('#externalPlanButton').disabled = false; }
+}
+
+async function selectExternalClipsFolder() {
+  const info = await window.vyt.chooseClipsFolder();
+  if (!info) return;
+  selectedExternalClipsFolder = info;
+  $('#externalClipsTitle').textContent = info.name;
+  $('#externalClipsMeta').textContent = 'Carpeta seleccionada · ahora comprueba los clips';
+  $('#externalRenderButton').disabled = true;
+  showError($('#externalError'), '');
+}
+
+async function checkExternalClips() {
+  try {
+    if (!externalPlan) throw new Error('Crea primero los prompts.');
+    if (!selectedExternalClipsFolder) throw new Error('Selecciona la carpeta de clips.');
+    $('#externalCheckButton').disabled = true;
+    showError($('#externalError'), 'Comprobando nombres y duraciones…');
+    const result = await window.vyt.validateExternalClips(externalPlan.planPath, selectedExternalClipsFolder.path);
+    const report = result.report;
+    const summary = $('#externalClipReport');
+    summary.hidden = false;
+    summary.classList.toggle('warning', !report.ready);
+    if (report.ready) {
+      summary.innerHTML = `<b>Todo listo.</b> ${report.ready_numbers.length} clips están presentes y tienen la duración necesaria.`;
+      $('#externalRenderButton').disabled = false;
+    } else {
+      const problems = [report.missing.length ? `Faltan: ${report.missing.map((n) => String(n).padStart(3, '0')).join(', ')}` : '', report.too_short.length ? `Demasiado cortos: ${report.too_short.map((item) => `${String(item.number).padStart(3, '0')} (${item.actual}s / necesita ${item.required}s)`).join(', ')}` : ''].filter(Boolean);
+      summary.innerHTML = `<b>Aún no se puede montar.</b><ul>${problems.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>`;
+      $('#externalRenderButton').disabled = true;
+    }
+    showError($('#externalError'), '');
+  } catch (error) { showError($('#externalError'), error.message); }
+  finally { $('#externalCheckButton').disabled = false; }
+}
+
+async function renderExternalVideo() {
+  try {
+    const title = $('#externalTitleInput').value.trim();
+    if (!title) throw new Error('Escribe un título para el vídeo final.');
+    if (!externalPlan || !selectedExternalAudio || !selectedExternalClipsFolder) throw new Error('Completa los pasos anteriores antes de montar.');
+    $('#externalRenderButton').disabled = true;
+    showError($('#externalError'), 'Añadiendo el montaje a Producción…');
+    await window.vyt.renderExternal({ title, planPath: externalPlan.planPath, audio: selectedExternalAudio.path, clipsFolder: selectedExternalClipsFolder.path });
+    showError($('#externalError'), ''); showToast('Montaje puesto en cola');
+  } catch (error) { showError($('#externalError'), error.message); $('#externalRenderButton').disabled = false; }
+}
+
 function loadCanvasImage(dataUrl) {
   return new Promise((resolve, reject) => {
     const image = new Image();
@@ -163,16 +256,21 @@ function renderJobs() {
   const active = appState.jobs.filter((j) => !['completed', 'failed', 'cancelled'].includes(j.status));
   $('#capacityLabel').textContent = currentLanguage === 'en' ? `${active.filter((j) => j.status === 'running').length} active` : `${active.filter((j) => j.status === 'running').length} activas`;
   $('#jobsEmpty').style.display = active.length ? 'none' : 'flex';
-  $('#jobsList').innerHTML = active.map((job) => `
+  $('#jobsList').innerHTML = active.map((job) => {
+    const cost = job.external
+      ? (currentLanguage === 'en' ? 'No VYT API cost' : 'Sin coste de APIs VYT')
+      : `${Number(job.spentUsd || 0).toFixed(2)} $ / ${Number(job.maxCostUsd || (job.testMode ? 1.5 : 7)).toFixed(2)} $`;
+    return `
     <article class="job-card">
       <div class="job-title-row"><strong>${escapeHtml(job.title)}</strong><span class="job-percent">${Math.round(job.progress || 0)}%</span></div>
       <div class="progress-track"><i style="width:${Math.max(0, Math.min(100, job.progress || 0))}%"></i></div>
       <div class="job-detail"><span>${escapeHtml(job.phase || statusLabel('queued'))}</span><span>${job.status === 'queued' ? (currentLanguage === 'en' ? 'waiting for turn' : 'esperando turno') : formatEta(job.etaSeconds)}</span></div>
-      <div class="job-cost"><span>${escapeHtml(job.detail || (job.testMode ? (currentLanguage === 'en' ? '90-second test' : 'Prueba de 90 s') : (currentLanguage === 'en' ? 'Full video' : 'Vídeo completo')))}</span><b>${Number(job.spentUsd || 0).toFixed(2)} $ / ${Number(job.maxCostUsd || (job.testMode ? 1.5 : 7)).toFixed(2)} $</b></div>
+      <div class="job-cost"><span>${escapeHtml(job.detail || (job.external ? (currentLanguage === 'en' ? 'External clips edit' : 'Montaje de clips externos') : (job.testMode ? (currentLanguage === 'en' ? '90-second test' : 'Prueba de 90 s') : (currentLanguage === 'en' ? 'Full video' : 'Vídeo completo'))))}</span><b>${cost}</b></div>
       <div class="job-metrics"><span>${escapeHtml(statusLabel(job.status))}</span><span>${costMetric(job.costLedger, 'avoided_duplicate')} ${t('recovered') || 'recuperados'}</span><span>${costMetric(job.costLedger, 'charged')} ${t('charged') || 'cobrados'}</span><span>${operationMetric(job.providerOperations)} ${t('operations') || 'operaciones'}</span></div>
       ${job.warning ? `<div class="job-warning">${escapeHtml(job.warning)}</div>` : ''}
       <div class="job-actions"><button data-cancel="${job.id}">Cancelar</button></div>
-    </article>`).join('');
+    </article>`;
+  }).join('');
   $$('[data-cancel]').forEach((button) => button.onclick = () => window.vyt.cancelJob(button.dataset.cancel));
 }
 
@@ -424,6 +522,14 @@ $$('.nav-button').forEach((button) => button.onclick = () => {
   if (button.dataset.view === 'channels' && !channelsLoaded) loadChannels();
 });
 $('#browseButton').onclick = selectVideo;
+$$('.workflow-tab').forEach((button) => button.onclick = () => switchWorkflow(button.dataset.workflow));
+$('#externalAudioButton').onclick = selectExternalAudio;
+$('#externalAudioZone').onclick = (event) => { if (event.target.id !== 'externalAudioButton') selectExternalAudio(); };
+$('#externalPlanButton').onclick = createExternalPlan;
+$('#externalClipsButton').onclick = selectExternalClipsFolder;
+$('#externalClipsZone').onclick = (event) => { if (event.target.id !== 'externalClipsButton') selectExternalClipsFolder(); };
+$('#externalCheckButton').onclick = checkExternalClips;
+$('#externalRenderButton').onclick = renderExternalVideo;
 $('#selectProductQr').onclick = selectProductQr;
 $('#productQrToggle').onchange = () => { $('#productQrPanel').hidden = !$('#productQrToggle').checked; };
 $('#dropZone').onclick = (event) => { if (event.target.id !== 'browseButton') selectVideo(); };

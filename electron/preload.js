@@ -2,9 +2,14 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('vyt', {
   chooseVideo: () => ipcRenderer.invoke('choose-video'),
+  chooseAudio: () => ipcRenderer.invoke('choose-audio'),
+  chooseClipsFolder: () => ipcRenderer.invoke('choose-clips-folder'),
   chooseProductQr: () => ipcRenderer.invoke('choose-product-qr'),
   inspectVideo: (filePath) => ipcRenderer.invoke('inspect-video', filePath),
   createJob: (payload) => ipcRenderer.invoke('create-job', payload),
+  createExternalPlan: (payload) => ipcRenderer.invoke('external-create-plan', payload),
+  validateExternalClips: (planPath, clipsFolder) => ipcRenderer.invoke('external-validate-clips', planPath, clipsFolder),
+  renderExternal: (payload) => ipcRenderer.invoke('external-render', payload),
   resumeJob: (historyId) => ipcRenderer.invoke('resume-job', historyId),
   cancelJob: (jobId) => ipcRenderer.invoke('cancel-job', jobId),
   getState: () => ipcRenderer.invoke('get-state'),

@@ -5,6 +5,13 @@ into an automatically edited long-form YouTube video. VYT timestamps the
 narration, plans short visual beats, creates AI video and image B-roll, reviews
 the assets and renders a final 1080p export.
 
+It also includes **External Veo clips** mode: paste a final script and select
+the final voiceover to receive numbered, time-aligned prompts. Generate those
+clips in any external tool, name them `001.mp4`, `002.mp4`, and so on, then
+select their folder. VYT warns about missing or short clips and renders the
+trimmed, synced final edit. This mode makes no provider calls and needs no API
+keys inside VYT.
+
 ## What is included
 
 - Electron desktop interface and local durable job queue with no global active-job cap.
@@ -12,6 +19,7 @@ the assets and renders a final 1080p export.
 - Checkpoint and paid-asset recovery logic.
 - Optional presenter, split-screen, branding and QR-card placement.
 - Optional channel tracker backed by a separate encrypted SQLite database.
+- External-clip planning, validation and FFmpeg assembly for user-generated Veo clips.
 - Unit and integration tests using synthetic data only.
 
 API keys, user videos, generated media, channel credentials, checkpoints and
@@ -86,6 +94,6 @@ are external to this repository and are not required for the video pipeline.
 
 ## Security and sharing
 
-This repository is intended to remain private. Before sharing logs or
+Before sharing logs or
 checkpoints, review them because they can contain local file paths, narration,
 provider job identifiers or generated-asset URLs. No public license is granted.
