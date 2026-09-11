@@ -76,55 +76,62 @@ def _rewrite_external_prompts(plan: Dict[str, Any], client: Any) -> List[str]:
     """Replace raw narration with structured, scene-specific Veo prompts."""
     scenes = list(plan.get("scenes") or [])
     warnings: List[str] = []
-    for offset in range(0, len(scenes), EXTERNAL_PROMPT_BATCH_SIZE):
-        batch = scenes[offset:offset + EXTERNAL_PROMPT_BATCH_SIZE]
+
+    def rewrite_batch(batch: List[Dict[str, Any]]) -> None:
+        """Apply one valid structured model response, or raise without mutation."""
         beats = [{
             "id": scene["id"], "start": scene["start"], "end": scene["end"],
             "duration_seconds": scene["duration"], "narration": scene["narration"],
         } for scene in batch]
-        try:
-            result = client.chat_json(
-                EXTERNAL_PROMPT_SYSTEM,
-                EXTERNAL_PROMPT_REQUEST.format(
-                    style=plan.get("style") or "realistic documentary B-roll",
-                    beats=json.dumps(beats, ensure_ascii=False),
-                ),
-                max_tokens=2200,
-                response_schema={
+        result = client.chat_json(
+            EXTERNAL_PROMPT_SYSTEM,
+            EXTERNAL_PROMPT_REQUEST.format(
+                style=plan.get("style") or "realistic documentary B-roll",
+                beats=json.dumps(beats, ensure_ascii=False),
+            ),
+            max_tokens=2200,
+            response_schema={
+                "type": "object",
+                "properties": {"scenes": {"type": "array", "items": {
                     "type": "object",
-                    "properties": {"scenes": {"type": "array", "items": {
-                        "type": "object",
-                        "properties": {
-                            "id": {"type": "string"},
-                            "visual_prompt": {"type": "string"},
-                            "reject_if": {"type": "array", "items": {"type": "string"}},
-                        },
-                        "required": ["id", "visual_prompt", "reject_if"],
-                        "additionalProperties": False,
-                    }}},
-                    "required": ["scenes"], "additionalProperties": False,
-                },
-            )
-            rewritten = {str(item.get("id") or "").strip(): item for item in (result.get("scenes") or []) if isinstance(item, dict)}
-            missing = []
-            for scene in batch:
-                item = rewritten.get(scene["id"], {})
-                visual_prompt = str(item.get("visual_prompt") or "").strip()
-                if len(visual_prompt) < 40:
-                    missing.append(scene["id"])
-                    continue
-                scene["prompt"] = f"{scene['id']}. {visual_prompt}"
-                rejects = item.get("reject_if")
-                scene["reject_if"] = [str(value).strip() for value in rejects if str(value).strip()][:6] if isinstance(rejects, list) else []
-                scene["prompt_source"] = "ai"
-            if missing:
-                raise ValueError("missing prompt IDs: " + ", ".join(missing))
+                    "properties": {
+                        "id": {"type": "string"},
+                        "visual_prompt": {"type": "string"},
+                        "reject_if": {"type": "array", "items": {"type": "string"}},
+                    },
+                    "required": ["id", "visual_prompt", "reject_if"],
+                    "additionalProperties": False,
+                }}},
+                "required": ["scenes"], "additionalProperties": False,
+            },
+        )
+        rewritten = {str(item.get("id") or "").strip(): item for item in (result.get("scenes") or []) if isinstance(item, dict)}
+        missing = [scene["id"] for scene in batch if len(str(rewritten.get(scene["id"], {}).get("visual_prompt") or "").strip()) < 40]
+        if missing:
+            raise ValueError("missing prompt IDs: " + ", ".join(missing))
+        for scene in batch:
+            item = rewritten[scene["id"]]
+            scene["prompt"] = f"{scene['id']}. {str(item['visual_prompt']).strip()}"
+            rejects = item.get("reject_if")
+            scene["reject_if"] = [str(value).strip() for value in rejects if str(value).strip()][:6] if isinstance(rejects, list) else []
+            scene["prompt_source"] = "ai"
+
+    for offset in range(0, len(scenes), EXTERNAL_PROMPT_BATCH_SIZE):
+        batch = scenes[offset:offset + EXTERNAL_PROMPT_BATCH_SIZE]
+        try:
+            rewrite_batch(batch)
         except Exception as error:
-            warnings.append(f"AI rewrite unavailable for prompts {batch[0]['id']}–{batch[-1]['id']}: {error}")
+            # A long structured response can occasionally be cut off by a
+            # provider despite its retries. Recover the paid batch by asking
+            # for one small schema at a time before ever accepting a fallback.
             for scene in batch:
-                scene["prompt"] = f"{scene['id']}. {_fallback_visual_prompt(scene['narration'], plan.get('style') or '')}"
-                scene["reject_if"] = ["readable screen or invented text", "talking head", "extra limbs or duplicated props"]
-                scene["prompt_source"] = "fallback"
+                try:
+                    rewrite_batch([scene])
+                except Exception as single_error:
+                    warnings.append(f"AI rewrite unavailable for prompt {scene['id']}: {single_error}")
+                    scene["prompt"] = f"{scene['id']}. {_fallback_visual_prompt(scene['narration'], plan.get('style') or '')}"
+                    scene["reject_if"] = ["readable screen or invented text", "talking head", "extra limbs or duplicated props"]
+                    scene["prompt_source"] = "fallback"
     return warnings
 
 
